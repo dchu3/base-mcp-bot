@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -62,6 +63,7 @@ class Database:
         async with self._engine.begin() as conn:  # pragma: no cover - DDL
             await conn.run_sync(SQLModel.metadata.create_all)
 
+    @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
         """Return an async session context."""
         if not self._session_maker:

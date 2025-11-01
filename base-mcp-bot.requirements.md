@@ -39,9 +39,12 @@ Environment variables:
 ```
 TELEGRAM_BOT_TOKEN=
 GEMINI_API_KEY=
+GEMINI_MODEL=gemini-1.5-flash-latest
+TELEGRAM_CHAT_ID=
+PLANNER_PROMPT_FILE=./prompts/planner.md
 
 # MCP endpoints (stdio or TCP/HTTP bridge)
-MCP_BASE_SERVER_CMD="npx -y base-mcp-server start"
+MCP_BASE_SERVER_CMD="node ../base-mcp-server/dist/index.js start"
 MCP_DEXSCREENER_CMD="node /abs/path/to/mcp-servers/mcp-dexscreener/index.js"
 
 # Network selection

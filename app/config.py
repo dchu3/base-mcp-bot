@@ -21,9 +21,18 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
+    gemini_model: str = Field(
+        default="gemini-1.5-flash-latest",
+        alias="GEMINI_MODEL",
+    )
+    planner_prompt_file: Optional[Path] = Field(
+        default=None,
+        alias="PLANNER_PROMPT_FILE",
+    )
+    telegram_chat_id: Optional[int] = Field(default=None, alias="TELEGRAM_CHAT_ID")
 
     mcp_base_server_cmd: str = Field(
-        default="npx -y base-mcp-server start",
+        default="node ../base-mcp-server/dist/index.js start",
         alias="MCP_BASE_SERVER_CMD",
     )
     mcp_dexscreener_cmd: str = Field(

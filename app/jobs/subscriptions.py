@@ -28,6 +28,7 @@ class SubscriptionService:
         network: str,
         bot,
         interval_minutes: int,
+        override_chat_id: int | None = None,
     ) -> None:
         self.scheduler = scheduler
         self.db = db
@@ -36,6 +37,7 @@ class SubscriptionService:
         self.network = network
         self.bot = bot
         self.interval_minutes = interval_minutes
+        self.override_chat_id = override_chat_id
         self._job = None
 
     def start(self) -> None:
@@ -92,8 +94,13 @@ class SubscriptionService:
             return
 
         user = await repo.get_user_by_id(subscription.user_id)
-        if not user:
+        if not user and not self.override_chat_id:
             logger.warning("subscription_missing_user", user_id=subscription.user_id)
+            return
+
+        target_chat_id = self.override_chat_id or (user.chat_id if user else None)
+        if not target_chat_id:
+            logger.warning("subscription_missing_chat_id", user_id=subscription.user_id)
             return
 
         lines = [format_transaction(tx) for tx in fresh]
@@ -103,7 +110,7 @@ class SubscriptionService:
                 "\n".join(lines),
             ]
         )
-        await self.bot.send_message(chat_id=user.chat_id, text=message, parse_mode="MarkdownV2")
+        await self.bot.send_message(chat_id=target_chat_id, text=message, parse_mode="MarkdownV2")
 
     def _resolve_router(self, router_key: str) -> RouterInfo:
         return resolve_router(router_key, self.network, self.routers)

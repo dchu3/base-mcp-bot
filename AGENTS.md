@@ -1,24 +1,24 @@
 # Repository Guidelines
 
-These guidelines keep contributions consistent for the Base MCP Telegram bot. Review them before opening a pull request.
+Follow these conventions when contributing to the Base MCP Telegram bot.
 
 ## Project Structure & Module Organization
-Source lives under `app/`, with feature logic split into `handlers/`, orchestration helpers in `planner.py` and `mcp_client.py`, data access in `store/`, and shared helpers in `utils/`. Configuration helpers (`config.py`, `.env.example`) sit at the package root. Tests mirror the package layout inside `tests/`. Runtime assets such as `routers.base.json`, the SQLite `state.db`, and Docker artefacts (`Dockerfile`, `deploy/docker-compose.yml`) stay in the repository root. Keep new modules small and feature-focused; wire them through `app/main.py`.
+Everything ships from `app/`. `main.py` wires the Telegram dispatcher, `config.py` loads environment settings, `handlers/` contains chat commands, `planner.py` orchestrates Gemini + MCP calls, `mcp_client.py` handles subprocess I/O, `store/` wraps the SQLite layer, `jobs/` runs APScheduler tasks, and `utils/` holds formatting, logging, prompt, and router helpers. Reusable planner copy lives in `prompts/planner.md`. Automation scripts sit in `scripts/`, and tests mirror the runtime modules under `tests/`. Use `.env.example` as the canonical reference when introducing new configuration keys.
 
 ## Build, Test, and Development Commands
-- `python -m venv .venv && source .venv/bin/activate`: create and activate a local virtual environment.
-- `pip install -r requirements.txt`: install runtime and development dependencies; update this file whenever dependencies change.
-- `python -m app.main`: run the bot locally; ensure required environment variables are loaded via `.env`.
-- `docker compose -f deploy/docker-compose.yml up --build`: launch the bot with bundled MCP servers for end-to-end checks.
+- `./scripts/install.sh` provisions `.venv`, installs dependencies with `pip --no-cache-dir`, and pins tooling versions.
+- `source .venv/bin/activate && ./scripts/start.sh` launches the bot and the configured Base and Dexscreener MCP servers; pass extra flags after the script name to tweak logging.
+- `python -m app.main` runs the bot directly if MCP processes are already managed externally.
+- `pytest`, `ruff check`, and `black --check .` are the required validation steps before opening a pull request.
 
 ## Coding Style & Naming Conventions
-Follow PEP 8 with 4-space indentation, type hints on public functions, and descriptive snake_case names. Use `CamelCase` for classes and `UPPER_SNAKE_CASE` for constants. Run `ruff check` for linting, `black` for formatting, and keep docstrings concise, describing side effects and tool interactions.
+Target Python 3.11 with PEP 8 defaults (4-space indentation, snake_case functions, PascalCase classes, UPPER_SNAKE_CASE constants). Type hints are expected on public APIs, and docstrings should focus on side effects or protocol contracts. Always run `ruff` and `black` via the commands above.
 
 ## Testing Guidelines
-Unit tests belong in `tests/` with filenames matching `test_<module>.py`. Use `pytest` fixtures to mock MCP servers and Telegram APIs. Aim for ≥85% coverage on planner, formatting, and database layers; add integration smoke tests that depend on docker-compose and guard them with `pytest -m "integration"`. Document any new fixtures or sample payloads alongside the tests.
+Place unit tests beside their runtime counterparts under `tests/`, naming files `test_<module>.py`. Use `pytest` fixtures to stub Gemini and MCP interactions; add an `integration` marker when Dockerized or network-dependent behaviour is exercised so CI can skip it. Keep subscription and planner scenarios covered when altering schemas, and document any new canned payloads in the test module.
 
 ## Commit & Pull Request Guidelines
-Existing history uses short, imperative summaries (`initial setup`, `Initial commit`); keep subject lines under 72 characters and body paragraphs wrapped at 100. Reference issues when applicable, list key changes in bullet form, and note follow-up tasks. PRs must mention environment or schema changes, include screenshots for Telegram UX tweaks, link to relevant MCP tool specs, and describe manual verification steps.
+Write imperative, ≤72-character commit subjects with optional wrapped bodies (100 columns). Reference tickets using `Refs:` or `Fixes:` when applicable. Pull requests should summarize behavioural changes, list manual verification steps (bot commands run, MCP responses inspected), attach screenshots for Telegram UX updates, and call out new environment variables or script requirements.
 
-## Security & Configuration Tips
-Never commit real API tokens or `state.db`; rely on `.env` templates and gitignored storage. Validate new MCP commands against rate limits and ensure responses append the “not financial advice” footer whenever prices surface. Rotate credentials before demos and scrub logs of PII.
+## MCP & Configuration Tips
+Never commit populated `.env` files or SQLite artefacts; `.gitignore` already excludes `.env`, `.tmp/`, and `state.db`. Ensure `PLANNER_PROMPT_FILE`, MCP command paths, and optional `TELEGRAM_CHAT_ID` are kept in `.env`. When sharing command examples, prefer relative paths or placeholders so secrets and machine-specific directories stay out of version control.

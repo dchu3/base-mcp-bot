@@ -1,4 +1,4 @@
-from app.utils.formatting import append_not_financial_advice, format_transaction
+from app.utils.formatting import append_not_financial_advice, escape_markdown, format_transaction
 
 
 def test_format_transaction_basic():
@@ -11,8 +11,8 @@ def test_format_transaction_basic():
     }
     output = format_transaction(tx)
     assert "swapExactTokensForTokens" in output
-    assert "0.5 ETH" in output
-    assert "12:00" in output
+    assert escape_markdown("0.5 ETH") in output
+    assert escape_markdown("12:00") in output
 
 
 def test_append_not_financial_advice():
