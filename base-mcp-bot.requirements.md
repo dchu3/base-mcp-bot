@@ -65,16 +65,24 @@ DATABASE_URL=sqlite:///./state.db
 routers.base.json example:
 ```json
 {
-  "uniswap_v3": {
-    "mainnet": "0xE592427A0AEce92De3Edee1F18E0157C05861564",
+  "aerodrome_v2": {
+    "mainnet": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
     "sepolia": "0x0000000000000000000000000000000000000000"
   },
-  "aerodrome_v2": {
-    "mainnet": "0xC5cf4D1A...",
+  "uniswap_v2": {
+    "mainnet": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
     "sepolia": "0x0000000000000000000000000000000000000000"
+  },
+  "uniswap_v3": {
+    "mainnet": "0x2626664c2603336E57B271c5C0b26F421741e481",
+    "sepolia": "0x0000000000000000000000000000000000000000"
+  },
+  "pancakeswap_v2": {
+    "mainnet": "0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb",
+    "sepolia": "0xBbc55276a0b44A69955C3055333E085654F967b4"
   },
   "pancakeswap_v3": {
-    "mainnet": "0x...",
+    "mainnet": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
     "sepolia": "0x0000000000000000000000000000000000000000"
   }
 }

@@ -8,16 +8,24 @@ from pathlib import Path
 from typing import Dict, Optional
 
 DEFAULT_ROUTERS: Dict[str, Dict[str, str]] = {
-    "uniswap_v3": {
-        "base-mainnet": "0x925CacB0cb1cBBF56371A199b2eC27405a58Ce09",
+    "aerodrome_v2": {
+        "base-mainnet": "0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43",
         "base-sepolia": "0x0000000000000000000000000000000000000000",
     },
-    "aerodrome_v2": {
-        "base-mainnet": "0xC5cf4D1A00000000000000000000000000000000",
+    "uniswap_v2": {
+        "base-mainnet": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
         "base-sepolia": "0x0000000000000000000000000000000000000000",
+    },
+    "uniswap_v3": {
+        "base-mainnet": "0x2626664c2603336E57B271c5C0b26F421741e481",
+        "base-sepolia": "0x0000000000000000000000000000000000000000",
+    },
+    "pancakeswap_v2": {
+        "base-mainnet": "0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb",
+        "base-sepolia": "0xBbc55276a0b44A69955C3055333E085654F967b4",
     },
     "pancakeswap_v3": {
-        "base-mainnet": "0x0000000000000000000000000000000000000000",
+        "base-mainnet": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
         "base-sepolia": "0x0000000000000000000000000000000000000000",
     },
 }

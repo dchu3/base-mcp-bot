@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Iterable, List, Mapping, Sequence
 
-NOT_FINANCIAL_ADVICE = "(DYOR, not financial advice)"
+NOT_FINANCIAL_ADVICE = "DYOR, not financial advice"
 
 
 def escape_markdown(text: str) -> str:
@@ -57,5 +57,5 @@ def join_messages(parts: Sequence[str]) -> str:
 
 def append_not_financial_advice(message: str) -> str:
     """Ensure the output ends with the NFA footer."""
-    footer = f"\n\n_{escape_markdown(NOT_FINANCIAL_ADVICE)}_"
+    footer = f"\n\n{escape_markdown(NOT_FINANCIAL_ADVICE)}"
     return message + footer

@@ -92,7 +92,7 @@ class GeminiPlanner:
             logger.warning("planner_no_plan", message=message)
             return "I could not determine a suitable tool to answer that. Please rephrase or specify a router/token."
 
-        results = await self._execute_plan(plan)
+        results = await self._execute_plan(plan, context)
         return self._render_response(message, context, results)
 
     async def _plan(self, message: str, context: Dict[str, Any]) -> List[ToolInvocation]:
@@ -315,11 +315,12 @@ class GeminiPlanner:
         decoded = tx.get("decoded")
         if isinstance(decoded, dict):
             params = decoded.get("params")
-            addresses.update(self._extract_addresses_from_value(params))
+            addresses.update(GeminiPlanner._extract_addresses_from_value(params))
 
         return addresses
 
-    def _extract_addresses_from_value(self, value: Any) -> Set[str]:
+    @staticmethod
+    def _extract_addresses_from_value(value: Any) -> Set[str]:
         addresses: Set[str] = set()
         if value is None:
             return addresses
@@ -329,20 +330,22 @@ class GeminiPlanner:
             return addresses
         if isinstance(value, dict):
             for inner in value.values():
-                addresses.update(self._extract_addresses_from_value(inner))
+                addresses.update(GeminiPlanner._extract_addresses_from_value(inner))
             return addresses
         if isinstance(value, list):
             for item in value:
-                addresses.update(self._extract_addresses_from_value(item))
+                addresses.update(GeminiPlanner._extract_addresses_from_value(item))
         return addresses
 
     async def _execute_plan(
         self,
         plan: Sequence[ToolInvocation],
+        context: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
         collected_tokens: Dict[str, str] = {}
         planned_token_keys: Set[str] = set()
+        chain_id = self._derive_chain_id(context.get("network"))
 
         for call in plan:
             try:
@@ -393,8 +396,8 @@ class GeminiPlanner:
         for token in additional_tokens:
             invocation = ToolInvocation(
                 client="dexscreener",
-                method="getTokenOverview",
-                params={"tokenAddress": token},
+                method="getPairsByToken",
+                params={"chainId": chain_id, "tokenAddress": token},
             )
             try:
                 dex_result = await self.mcp_manager.dexscreener.call_tool(
@@ -419,7 +422,10 @@ class GeminiPlanner:
         results: Iterable[Dict[str, Any]],
     ) -> str:
         sections: List[str] = []
+        token_lines: List[str] = []
         add_nfa = False
+        router_label: str | None = None
+        seen_pairs: Set[str] = set()
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -430,12 +436,37 @@ class GeminiPlanner:
 
             result = entry.get("result")
             if call.method == "getDexRouterActivity":
-                sections.append(self._format_router_activity(call, result))
-            elif call.method in {"getTokenOverview", "searchPairs", "getPairByAddress"}:
-                sections.append(self._format_token_result(result))
-                add_nfa = True
-            else:
-                sections.append(f"*{title}*:\n```\n{json.dumps(result, indent=2)[:1500]}\n```")
+                if router_label is None:
+                    router_label = call.params.get("routerKey") or call.params.get("router")
+                continue
+
+            if call.method in {"getPairsByToken", "getTokenOverview", "searchPairs", "getPairByAddress"}:
+                normalized_tokens = self._extract_token_entries(result)
+                for token in normalized_tokens:
+                    dedupe_key = token.get("url") or token.get("symbol") or ""
+                    if dedupe_key and dedupe_key in seen_pairs:
+                        continue
+                    if dedupe_key:
+                        seen_pairs.add(dedupe_key)
+                    token_lines.append(format_token_summary(token))
+                if normalized_tokens:
+                    add_nfa = True
+                continue
+
+            sections.append(f"*{title}*:\n```\n{json.dumps(result, indent=2)[:1500]}\n```")
+
+        if token_lines:
+            label = router_label or "selected router"
+            header = escape_markdown(f"Dexscreener snapshots for {label}")
+            sections.insert(
+                0,
+                join_messages(
+                    [
+                        header,
+                        "\n".join(token_lines[: self.MAX_ROUTER_ITEMS]),
+                    ]
+                ),
+            )
 
         summary = join_messages(sections)
         if add_nfa:
@@ -459,18 +490,22 @@ class GeminiPlanner:
         header = f"Recent transactions for {label_md}"
         return join_messages([header, "\n".join(lines)])
 
-    def _format_token_result(self, result: Any) -> str:
+    def _extract_token_entries(self, result: Any) -> List[Dict[str, str]]:
         if isinstance(result, dict):
-            tokens = result.get("tokens") or result.get("results") or []
-        else:
+            tokens = result.get("tokens") or result.get("results")
+            if not isinstance(tokens, list):
+                return []
+        elif isinstance(result, list):
             tokens = result
-        if not isinstance(tokens, list) or not tokens:
-            return "No token summaries available."
-        lines = [format_token_summary(self._normalize_token(tok)) for tok in tokens]
-        return join_messages(["Token summaries", "\n".join(lines)])
+        else:
+            return []
 
-    @staticmethod
-    def _normalize_tx(tx: Any) -> Dict[str, str]:
+        normalized: List[Dict[str, str]] = []
+        for token in tokens:
+            normalized.append(self._normalize_token(token))
+        return normalized
+
+    def _normalize_tx(self, tx: Any) -> Dict[str, str]:
         if not isinstance(tx, dict):
             return {}
         hash_value = tx.get("hash") or tx.get("txHash") or ""
@@ -495,12 +530,42 @@ class GeminiPlanner:
     def _normalize_token(token: Any) -> Dict[str, str]:
         if not isinstance(token, dict):
             return {}
-        symbol = token.get("symbol") or token.get("baseToken", {}).get("symbol") or token.get("pair")
+        base_token = token.get("baseToken", {})
+        quote_token = token.get("quoteToken", {})
+        base_symbol = base_token.get("symbol") if isinstance(base_token, dict) else None
+        quote_symbol = quote_token.get("symbol") if isinstance(quote_token, dict) else None
+        pair_label = None
+        if base_symbol and quote_symbol:
+            pair_label = f"{base_symbol}/{quote_symbol}"
+        symbol = token.get("symbol") or pair_label or token.get("pair")
+
         price = token.get("priceUsd") or token.get("price")
+        if price is None and isinstance(token.get("price"), dict):
+            price = token["price"].get("usd")
+
         volume = token.get("volume24h") or token.get("fdv")
+        if volume is None:
+            vol_obj = token.get("volume")
+            if isinstance(vol_obj, dict):
+                volume = vol_obj.get("h24") or vol_obj.get("h6")
+
         liquidity = token.get("liquidity") or token.get("liquidityUsd")
+        if isinstance(liquidity, dict):
+            liquidity = liquidity.get("usd") or liquidity.get("base")
+
         change = token.get("priceChange24h") or token.get("change24h")
-        url = token.get("url") or token.get("dexscreenerUrl") or token.get("pairAddress")
+        if change is None:
+            change_obj = token.get("priceChange")
+            if isinstance(change_obj, dict):
+                change = change_obj.get("h24") or change_obj.get("h6")
+
+        url = token.get("url") or token.get("dexscreenerUrl")
+        if not url:
+            pair_address = token.get("pairAddress")
+            chain_id = token.get("chainId")
+            if isinstance(pair_address, str) and isinstance(chain_id, str):
+                url = f"https://dexscreener.com/{chain_id}/{pair_address}"
+
         return {
             "symbol": str(symbol or "TOKEN"),
             "price": str(price or "?"),
@@ -536,3 +601,14 @@ class GeminiPlanner:
             except ValueError:
                 return trimmed
         return str(value)
+
+    @staticmethod
+    def _derive_chain_id(network: Any) -> str:
+        if not isinstance(network, str) or not network:
+            return "base"
+        lowered = network.lower()
+        if lowered.startswith("base-"):
+            return "base"
+        if lowered in {"base", "base-mainnet"}:
+            return "base"
+        return lowered.split("-")[0]
