@@ -14,6 +14,13 @@ def escape_markdown(text: str) -> str:
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
 
 
+def escape_markdown_url(url: str) -> str:
+    """Escape Telegram MarkdownV2-sensitive characters inside link URLs."""
+    if not url:
+        return ""
+    return url.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
 def format_transaction(entry: Mapping[str, str]) -> str:
     """Format a single transaction entry for display."""
     fn = entry.get("method", "txn")
@@ -46,7 +53,8 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
     )
 
     if link:
-        return f"• [{body}]({escape_markdown(link)})"
+        safe_link = escape_markdown_url(link)
+        return f"• [{body}]({safe_link})"
     return f"• {body}"
 
 

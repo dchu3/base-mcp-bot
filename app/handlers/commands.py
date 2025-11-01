@@ -310,9 +310,9 @@ async def send_planner_response(update: Update, context: CallbackContext, messag
                 parse_mode="MarkdownV2",
                 disable_web_page_preview=True,
             )
-        except BadRequest:
+        except BadRequest as exc:
+            logger.warning("telegram_markdown_failed", error=str(exc), text=text)
             await update.message.reply_text(
-                escape_markdown(text),
-                parse_mode="MarkdownV2",
+                text,
                 disable_web_page_preview=True,
             )
