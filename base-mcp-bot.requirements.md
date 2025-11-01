@@ -42,7 +42,7 @@ GEMINI_API_KEY=
 
 # MCP endpoints (stdio or TCP/HTTP bridge)
 MCP_BASE_SERVER_CMD="npx -y base-mcp-server start"
-MCP_DEXSCREENER_CMD="node /root/mcp-servers/mcp-dexscreener/index.js"
+MCP_DEXSCREENER_CMD="node /abs/path/to/mcp-servers/mcp-dexscreener/index.js"
 
 # Network selection
 BASE_NETWORK=base-mainnet
