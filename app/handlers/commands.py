@@ -42,6 +42,7 @@ def setup(application: Application, handler_context: HandlerContext) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("routers", routers_command))
     application.add_handler(CommandHandler("latest", latest_command))
+    application.add_handler(CommandHandler("subscriptions", subscriptions_command))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("unsubscribe_all", unsubscribe_all_command))
@@ -92,6 +93,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "/subscribe <router> [minutes] — periodic updates\n"
         "/unsubscribe <router> — stop updates\n"
         "/unsubscribe_all — stop all router updates\n"
+        "/subscriptions — list your current router alerts\n"
         "/routers — list supported router keys\n\n"
         "You can also ask natural-language questions like "
         "'latest uniswap_v3 swaps last 15 minutes'."
@@ -209,6 +211,42 @@ async def subscribe_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         f"Subscribed to {router_key} updates every {minutes} minutes."
     )
+
+
+async def subscriptions_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    target_id = ctx.allowed_chat_id or update.effective_user.id
+
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_id)
+        subscriptions = await repo.list_subscriptions(user.id)
+
+    if not subscriptions:
+        await update.message.reply_text("No active subscriptions.")
+        return
+
+    lines = []
+    for subscription in sorted(subscriptions, key=lambda item: item.router_key):
+        try:
+            router = resolve_router(subscription.router_key, ctx.network, ctx.routers)
+            address = escape_markdown(router.address)
+            lines.append(
+                f"• {escape_markdown(subscription.router_key)} — `{address}` every "
+                f"{escape_markdown(str(subscription.lookback_minutes))} minutes"
+            )
+        except KeyError:
+            lines.append(
+                f"• {escape_markdown(subscription.router_key)} — unavailable on "
+                f"{escape_markdown(ctx.network)} every "
+                f"{escape_markdown(str(subscription.lookback_minutes))} minutes"
+            )
+
+    header = escape_markdown("Active subscriptions:")
+    message = "\n".join([header, *lines])
+    await update.message.reply_text(message, parse_mode="MarkdownV2")
 
 
 async def unsubscribe_command(update: Update, context: CallbackContext) -> None:

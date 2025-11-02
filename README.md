@@ -17,7 +17,14 @@ Populate `.env` with your Telegram bot token, Gemini API key (and optional `GEMI
 ./scripts/start.sh
 ```
 
-The bot launches both MCP servers, handles `/latest`, `/routers`, `/subscribe`, `/unsubscribe`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint.
+The bot launches both MCP servers, handles `/latest`, `/routers`, `/subscriptions`, `/subscribe`, `/unsubscribe`, `/unsubscribe_all`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint.
+
+### Subscriptions
+
+- Use `/subscribe <router> [minutes]` to store a recurring alert for the chosen router (default lookback comes from `DEFAULT_LOOKBACK_MINUTES` in `.env`).
+- `/subscriptions` echoes all active alerts for the current chat, including router addresses and polling cadence.
+- `/unsubscribe <router>` removes a single alert; `/unsubscribe_all` clears every stored router.
+- The scheduler runs every `SCHEDULER_INTERVAL_MINUTES` (configurable in `.env`) and polls each subscription. New swaps that have not been sent before are pushed to Telegram with Markdown-formatted summaries.
 
 ### Prompt template
 

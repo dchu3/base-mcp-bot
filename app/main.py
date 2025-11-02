@@ -41,6 +41,7 @@ async def main() -> None:
         BotCommand("help", "Show available options"),
         BotCommand("routers", "List supported routers"),
         BotCommand("latest", "Latest transactions for a router"),
+        BotCommand("subscriptions", "Show your router subscriptions"),
         BotCommand("subscribe", "Subscribe to router updates"),
         BotCommand("unsubscribe", "Stop router updates"),
         BotCommand("unsubscribe_all", "Stop all router updates"),
