@@ -48,4 +48,20 @@ def test_format_token_summary_preserves_url():
     }
     output = format_token_summary(entry)
     assert "https://dexscreener.com/base/0x123456" in output
+    assert "Signals:" in output
+    assert "\n  Signals:" in output
     assert "\\/" not in output
+
+
+def test_format_token_summary_highlights_alerts():
+    entry = {
+        "symbol": "ABC",
+        "price": "$2.50",
+        "volume24h": "12345",
+        "liquidity": "6789",
+        "change24h": "18.2%",
+        "url": "https://dexscreener.com/base/0xabc",
+    }
+    output = format_token_summary(entry)
+    assert escape_markdown("[ALERT]") in output
+    assert escape_markdown("move 18.2%") in output
