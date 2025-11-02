@@ -19,6 +19,14 @@ Populate `.env` with your Telegram bot token, Gemini API key (and optional `GEMI
 
 The bot launches both MCP servers, handles `/latest`, `/routers`, `/subscriptions`, `/subscribe`, `/unsubscribe`, `/unsubscribe_all`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint.
 
+Dexscreener rows now include contextual tags based on 24h price change:
+
+- **WATCH** — absolute move ≥5% and <15%; worth keeping an eye on.
+- **ALERT** — move ≥15%; highlights strong positive momentum.
+- **RISK** — move ≤−15%; flags sharp drawdowns.
+
+The tags appear in brackets before the token pair, followed by a second line of “Signals” summarising volume, liquidity, and price move when those figures are available.
+
 ### Subscriptions
 
 - Use `/subscribe <router> [minutes]` to store a recurring alert for the chosen router (default lookback comes from `DEFAULT_LOOKBACK_MINUTES` in `.env`).
