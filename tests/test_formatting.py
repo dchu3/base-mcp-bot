@@ -20,6 +20,18 @@ def test_format_transaction_basic():
     assert escape_markdown("12:00") in output
 
 
+def test_format_transaction_handles_numeric_fields():
+    tx = {
+        "method": "swap",
+        "amount": 123,
+        "timestamp": 1700000000,
+        "hash": "0x123",
+    }
+    output = format_transaction(tx)
+    assert escape_markdown("1700000000") in output
+    assert escape_markdown("123") in output
+
+
 def test_append_not_financial_advice():
     output = append_not_financial_advice("Some message")
     assert "not financial advice" in output.lower()

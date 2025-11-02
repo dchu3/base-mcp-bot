@@ -1,4 +1,6 @@
-import types
+from types import SimpleNamespace
+
+import pytest
 
 from app.planner import GeminiPlanner, ToolInvocation
 
@@ -130,3 +132,41 @@ def test_render_response_prefers_token_summaries() -> None:
     assert "Recent transactions" not in response
     assert "Dexscreener snapshots for uniswap\\_v3" in response
     assert "AAA/BBB" in response
+
+
+@pytest.mark.asyncio
+async def test_summarize_transactions_returns_token_summary() -> None:
+    planner = _make_planner()
+
+    class FakeDex:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def call_tool(self, method: str, params: dict) -> list:
+            self.calls.append((method, params))
+            return [
+                {
+                    "chainId": "base",
+                    "pairAddress": "0xpair",
+                    "baseToken": {"symbol": "AAA"},
+                    "quoteToken": {"symbol": "BBB"},
+                    "priceUsd": "1.01",
+                    "volume": {"h24": 1234},
+                    "liquidity": {"usd": 5678},
+                }
+            ]
+
+    fake_dex = FakeDex()
+    planner.mcp_manager = SimpleNamespace(dexscreener=fake_dex)
+
+    transactions = [
+        {"hash": "0x1", "token0Address": "0xToken"},
+        {"hash": "0x2", "token1Address": "0xToken"},
+    ]
+
+    summary = await planner.summarize_transactions("uniswap_v3", transactions, "base-mainnet")
+
+    assert summary is not None
+    assert "Dexscreener snapshots for uniswap\\_v3" in summary
+    assert "AAA/BBB" in summary
+    assert fake_dex.calls

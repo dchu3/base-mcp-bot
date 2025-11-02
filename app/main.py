@@ -79,6 +79,7 @@ async def main() -> None:
         scheduler=scheduler,
         db=db,
         mcp_manager=mcp_manager,
+        planner=planner,
         routers=routers,
         network=settings.base_network,
         bot=application.bot,

@@ -10,6 +10,10 @@ NOT_FINANCIAL_ADVICE = "DYOR, not financial advice"
 
 def escape_markdown(text: str) -> str:
     """Escape Telegram MarkdownV2 control characters."""
+    if text is None:
+        text = ""
+    if not isinstance(text, str):
+        text = str(text)
     special_chars = r"_*[]()~`>#+-=|{}.!\\"
     return "".join(f"\\{char}" if char in special_chars else char for char in text)
 

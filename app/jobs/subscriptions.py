@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable, List
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram.error import BadRequest
 
 from app.mcp_client import MCPManager
+from app.planner import GeminiPlanner
 from app.store.db import Database, Subscription
 from app.store.repository import Repository
-from app.utils.formatting import format_transaction, join_messages
+from app.utils.formatting import escape_markdown, join_messages
 from app.utils.logging import get_logger
 from app.utils.routers import RouterInfo, resolve_router
 
@@ -24,6 +26,7 @@ class SubscriptionService:
         scheduler: AsyncIOScheduler,
         db: Database,
         mcp_manager: MCPManager,
+        planner: GeminiPlanner,
         routers: Dict[str, Dict[str, str]],
         network: str,
         bot,
@@ -33,6 +36,7 @@ class SubscriptionService:
         self.scheduler = scheduler
         self.db = db
         self.mcp = mcp_manager
+        self.planner = planner
         self.routers = routers
         self.network = network
         self.bot = bot
@@ -74,7 +78,7 @@ class SubscriptionService:
             "sinceMinutes": subscription.lookback_minutes,
         }
         result = await self.mcp.base.call_tool("getDexRouterActivity", params)
-        if not isinstance(result, list):
+        if not isinstance(result, (list, dict)):
             logger.warning(
                 "subscription_invalid_result",
                 router_key=subscription.router_key,
@@ -82,8 +86,12 @@ class SubscriptionService:
             )
             return
 
+        transactions = self._iter_transactions(result)
+        if not transactions:
+            return
+
         fresh = []
-        for tx in result:
+        for tx in transactions:
             tx_hash = (tx.get("hash") if isinstance(tx, dict) else None) or ""
             if not tx_hash or await repo.is_seen(tx_hash):
                 continue
@@ -103,14 +111,46 @@ class SubscriptionService:
             logger.warning("subscription_missing_chat_id", user_id=subscription.user_id)
             return
 
-        lines = [format_transaction(tx) for tx in fresh]
-        message = join_messages(
-            [
-                f"Updates for *{subscription.router_key}* ({self.network})",
-                "\n".join(lines),
-            ]
+        summary = await self.planner.summarize_transactions(
+            subscription.router_key,
+            fresh,
+            self.network,
         )
-        await self.bot.send_message(chat_id=target_chat_id, text=message, parse_mode="MarkdownV2")
+
+        if summary:
+            message = summary
+        else:
+            message = join_messages(
+                [
+                    escape_markdown(
+                        f"No Dexscreener summaries for {subscription.router_key}"
+                        f" in the last {subscription.lookback_minutes} minutes."
+                    ),
+                ]
+            )
+
+        try:
+            await self.bot.send_message(
+                chat_id=target_chat_id, text=message, parse_mode="MarkdownV2"
+            )
+        except BadRequest:
+            await self.bot.send_message(chat_id=target_chat_id, text=message)
 
     def _resolve_router(self, router_key: str) -> RouterInfo:
         return resolve_router(router_key, self.network, self.routers)
+
+    @staticmethod
+    def _iter_transactions(payload: Any) -> List[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            items = payload.get("items")
+            if isinstance(items, list):
+                return [item for item in items if isinstance(item, dict)]
+            if isinstance(items, dict):
+                for key in ("items", "data", "records", "entries"):
+                    candidate = items.get(key)
+                    if isinstance(candidate, list):
+                        return [item for item in candidate if isinstance(item, dict)]
+                return []
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        return []

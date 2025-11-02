@@ -473,6 +473,62 @@ class GeminiPlanner:
             summary = append_not_financial_advice(summary)
         return summary or "No recent data returned for that request."
 
+    async def summarize_transactions(
+        self,
+        router_key: str,
+        transactions: Iterable[Dict[str, Any]],
+        network: str,
+    ) -> str | None:
+        """Return Dexscreener token summaries suitable for subscription alerts."""
+        addresses = self._collect_token_addresses(transactions)
+        if not addresses:
+            return None
+
+        chain_id = self._derive_chain_id(network)
+        summaries: List[str] = []
+        seen_pairs: Set[str] = set()
+        add_nfa = False
+
+        for address in addresses:
+            try:
+                result = await self.mcp_manager.dexscreener.call_tool(
+                    "getPairsByToken",
+                    {"chainId": chain_id, "tokenAddress": address},
+                )
+            except Exception as exc:  # pragma: no cover - network/process errors
+                logger.warning(
+                    "subscription_token_summary_failed",
+                    token=address,
+                    error=str(exc),
+                )
+                continue
+
+            entries = self._extract_token_entries(result)
+            if not entries:
+                continue
+            add_nfa = True
+            for entry in entries:
+                dedupe_key = entry.get("url") or entry.get("symbol") or ""
+                if dedupe_key and dedupe_key in seen_pairs:
+                    continue
+                if dedupe_key:
+                    seen_pairs.add(dedupe_key)
+                summaries.append(format_token_summary(entry))
+                if len(summaries) >= self.MAX_ROUTER_ITEMS:
+                    break
+            if len(summaries) >= self.MAX_ROUTER_ITEMS:
+                break
+
+        if not summaries:
+            return None
+
+        label = router_key or "router"
+        header = escape_markdown(f"Dexscreener snapshots for {label}")
+        message = join_messages([header, "\n".join(summaries[: self.MAX_ROUTER_ITEMS])])
+        if add_nfa:
+            message = append_not_financial_advice(message)
+        return message
+
     def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
         router_key = call.params.get("routerKey")
         router_address = call.params.get("router")
