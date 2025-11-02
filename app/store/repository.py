@@ -49,7 +49,7 @@ class Repository:
             router_key=router_key,
             lookback_minutes=lookback_minutes,
         )
-        self.session.merge(subscription)
+        await self.session.merge(subscription)
         await self.session.commit()
         return subscription
 
@@ -62,9 +62,15 @@ class Repository:
         )
         await self.session.commit()
 
+    async def remove_all_subscriptions(self, user_id: int) -> None:
+        await self.session.execute(
+            Subscription.__table__.delete().where(Subscription.user_id == user_id)
+        )
+        await self.session.commit()
+
     async def mark_seen(self, tx_hash: str, router_key: str) -> None:
         seen = SeenTxn(tx_hash=tx_hash, router_key=router_key)
-        self.session.merge(seen)
+        await self.session.merge(seen)
         await self.session.commit()
 
     async def is_seen(self, tx_hash: str) -> bool:

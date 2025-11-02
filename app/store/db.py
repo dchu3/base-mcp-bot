@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import Field, SQLModel
 
@@ -47,6 +49,14 @@ class Database:
         """Initialise engine and sessionmaker."""
         if self._engine:
             return
+
+        url = make_url(self.url)
+        if url.get_backend_name() == "sqlite":
+            database = url.database
+            if database and database != ":memory:":
+                Path(database).expanduser().resolve().parent.mkdir(
+                    parents=True, exist_ok=True
+                )
 
         self._engine = create_async_engine(self.url, echo=False, future=True)
         self._session_maker = sessionmaker(

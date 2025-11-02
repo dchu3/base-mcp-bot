@@ -44,6 +44,7 @@ def setup(application: Application, handler_context: HandlerContext) -> None:
     application.add_handler(CommandHandler("latest", latest_command))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("unsubscribe_all", unsubscribe_all_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, natural_language_handler)
@@ -90,6 +91,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "/latest <router> [minutes] — recent transactions + Dexscreener stats\n"
         "/subscribe <router> [minutes] — periodic updates\n"
         "/unsubscribe <router> — stop updates\n"
+        "/unsubscribe_all — stop all router updates\n"
         "/routers — list supported router keys\n\n"
         "You can also ask natural-language questions like "
         "'latest uniswap_v3 swaps last 15 minutes'."
@@ -181,7 +183,17 @@ async def subscribe_command(update: Update, context: CallbackContext) -> None:
         return
 
     router_key = args[0].lower()
-    minutes = int(args[1]) if len(args) > 1 else ctx.default_lookback
+    minutes = ctx.default_lookback
+    if len(args) > 1:
+        try:
+            minutes = int(args[1])
+        except ValueError:
+            await update.message.reply_text("Minutes must be a whole number.")
+            return
+
+    if minutes <= 0:
+        await update.message.reply_text("Minutes must be greater than zero.")
+        return
     try:
         resolve_router(router_key, ctx.network, ctx.routers)
     except KeyError:
@@ -195,7 +207,7 @@ async def subscribe_command(update: Update, context: CallbackContext) -> None:
         await repo.add_subscription(user.id, router_key, minutes)
 
     await update.message.reply_text(
-        f"Subscribed to {router_key} updates every {ctx.subscription_service.interval_minutes} minutes."
+        f"Subscribed to {router_key} updates every {minutes} minutes."
     )
 
 
@@ -214,6 +226,18 @@ async def unsubscribe_command(update: Update, context: CallbackContext) -> None:
         user = await repo.get_or_create_user(target_id)
         await repo.remove_subscription(user.id, router_key)
     await update.message.reply_text(f"Unsubscribed from {router_key}.")
+
+
+async def unsubscribe_all_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        target_id = ctx.allowed_chat_id or update.effective_user.id
+        user = await repo.get_or_create_user(target_id)
+        await repo.remove_all_subscriptions(user.id)
+    await update.message.reply_text("All subscriptions removed.")
 
 
 async def set_network(update: Update, context: CallbackContext) -> None:
@@ -301,18 +325,25 @@ async def send_planner_response(update: Update, context: CallbackContext, messag
             )
         return
     if update.message:
-        text = response.strip() if isinstance(response, str) else ""
-        if not text:
-            text = "No recent data returned for that request."
+        rendered = response.strip() if isinstance(response, str) else ""
+        if not rendered:
+            await update.message.reply_text(
+                "No recent data returned for that request.",
+                disable_web_page_preview=True,
+            )
+            return
+        markdown_text = rendered
         try:
             await update.message.reply_text(
-                text,
+                markdown_text,
                 parse_mode="MarkdownV2",
                 disable_web_page_preview=True,
             )
         except BadRequest as exc:
-            logger.warning("telegram_markdown_failed", error=str(exc), text=text)
+            logger.warning(
+                "telegram_markdown_failed", error=str(exc), text=markdown_text
+            )
             await update.message.reply_text(
-                text,
+                rendered,
                 disable_web_page_preview=True,
             )

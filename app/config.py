@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     )
 
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./state.db",
+        default="sqlite+aiosqlite:///./.tmp/state.db",
         alias="DATABASE_URL",
     )
 

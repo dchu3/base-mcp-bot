@@ -43,6 +43,7 @@ async def main() -> None:
         BotCommand("latest", "Latest transactions for a router"),
         BotCommand("subscribe", "Subscribe to router updates"),
         BotCommand("unsubscribe", "Stop router updates"),
+        BotCommand("unsubscribe_all", "Stop all router updates"),
     ]
 
     await application.bot.delete_my_commands(scope=BotCommandScopeDefault())
