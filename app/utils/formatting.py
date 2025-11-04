@@ -39,7 +39,7 @@ def format_transaction(entry: Mapping[str, str]) -> str:
 
     summary = f"• {escape_markdown(timestamp)} — {escape_markdown(fn)}"
     if amount:
-        summary += f" ({escape_markdown(amount)})"
+        summary += f" \\({escape_markdown(amount)}\\)"
     if explorer:
         summary += f" — [{escape_markdown(tx_hash[:8] + '…')}]({escape_markdown(explorer)})"
     else:
@@ -48,43 +48,45 @@ def format_transaction(entry: Mapping[str, str]) -> str:
 
 
 def format_token_summary(entry: Mapping[str, str]) -> str:
-    """Return a bullet summarising token stats."""
-    ticker = entry.get("symbol", "TOKEN")
-    price = entry.get("price", "?")
-    volume = entry.get("volume24h", "?")
-    liquidity = entry.get("liquidity", "?")
-    change = entry.get("change24h", "?")
+    """Render a Dexscreener token snapshot as a compact card."""
+    ticker = entry.get("symbol") or "TOKEN"
+    name = entry.get("name")
+    price = entry.get("price") or "?"
+    volume = entry.get("volume24h") or "?"
+    liquidity = entry.get("liquidity") or "?"
+    change = entry.get("change24h") or "?"
+    fdv = entry.get("fdv")
     link = entry.get("url")
     change_pct = _parse_percentage(change)
     signal_tag = _classify_change(change_pct)
 
-    headline_parts: List[str] = []
+    title = f"*{escape_markdown(ticker)}*"
+    if name and name != ticker:
+        title += f" \\({escape_markdown(name)}\\)"
     if signal_tag:
-        headline_parts.append(f"[{signal_tag}]")
-    headline_parts.append(f"{ticker} — price {price}")
-    if change and change != "?":
-        headline_parts.append(f"24h {change}")
-    headline_text = " ".join(headline_parts)
+        title += f" · {escape_markdown(signal_tag)}"
 
-    signal_bits: List[str] = []
+    price_line = f"Price: {escape_markdown(price)}"
+    if change and change != "?":
+        price_line += f" \\(24h {escape_markdown(change)}\\)"
+
+    metrics: List[str] = []
     if volume and volume != "?":
-        signal_bits.append(f"vol {volume}")
+        metrics.append(f"Vol {escape_markdown(volume)}")
     if liquidity and liquidity != "?":
-        signal_bits.append(f"liq {liquidity}")
-    if change and change != "?":
-        signal_bits.append(f"move {change}")
-    signal_line = "Signals: " + ", ".join(signal_bits) if signal_bits else "Signals unavailable"
+        metrics.append(f"Liq {escape_markdown(liquidity)}")
+    if fdv and fdv != "?":
+        metrics.append(f"FDV {escape_markdown(fdv)}")
+    metrics_line = " · ".join(metrics)
 
-    escaped_headline = escape_markdown(headline_text)
-    escaped_signals = escape_markdown(signal_line)
-
+    lines: List[str] = [title, price_line]
+    if metrics_line:
+        lines.append(metrics_line)
     if link:
         safe_link = escape_markdown_url(link)
-        headline = f"• [{escaped_headline}]({safe_link})"
-    else:
-        headline = f"• {escaped_headline}"
+        lines.append(f"[View on Dexscreener]({safe_link})")
 
-    return f"{headline}\n  {escaped_signals}"
+    return "\n".join(line for line in lines if line)
 
 
 def _parse_percentage(value: str | None) -> float | None:
@@ -120,5 +122,8 @@ def join_messages(parts: Sequence[str]) -> str:
 
 def append_not_financial_advice(message: str) -> str:
     """Ensure the output ends with the NFA footer."""
+    trimmed = message.strip()
+    if not trimmed:
+        return escape_markdown(NOT_FINANCIAL_ADVICE)
     footer = f"\n\n{escape_markdown(NOT_FINANCIAL_ADVICE)}"
-    return message + footer
+    return trimmed + footer

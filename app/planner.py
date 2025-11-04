@@ -463,7 +463,7 @@ class GeminiPlanner:
                 join_messages(
                     [
                         header,
-                        "\n".join(token_lines[: self.MAX_ROUTER_ITEMS]),
+                        join_messages(token_lines[: self.MAX_ROUTER_ITEMS]),
                     ]
                 ),
             )
@@ -524,7 +524,12 @@ class GeminiPlanner:
 
         label = router_key or "router"
         header = escape_markdown(f"Dexscreener snapshots for {label}")
-        message = join_messages([header, "\n".join(summaries[: self.MAX_ROUTER_ITEMS])])
+        message = join_messages(
+            [
+                header,
+                join_messages(summaries[: self.MAX_ROUTER_ITEMS]),
+            ]
+        )
         if add_nfa:
             message = append_not_financial_advice(message)
         return message

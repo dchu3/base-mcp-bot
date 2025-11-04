@@ -131,10 +131,17 @@ class SubscriptionService:
 
         try:
             await self.bot.send_message(
-                chat_id=target_chat_id, text=message, parse_mode="MarkdownV2"
+                chat_id=target_chat_id,
+                text=message,
+                parse_mode="MarkdownV2",
+                disable_web_page_preview=True,
             )
         except BadRequest:
-            await self.bot.send_message(chat_id=target_chat_id, text=message)
+            await self.bot.send_message(
+                chat_id=target_chat_id,
+                text=message,
+                disable_web_page_preview=True,
+            )
 
     def _resolve_router(self, router_key: str) -> RouterInfo:
         return resolve_router(router_key, self.network, self.routers)
