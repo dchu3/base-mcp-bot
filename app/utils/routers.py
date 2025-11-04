@@ -20,6 +20,10 @@ DEFAULT_ROUTERS: Dict[str, Dict[str, str]] = {
         "base-mainnet": "0x2626664c2603336E57B271c5C0b26F421741e481",
         "base-sepolia": "0x0000000000000000000000000000000000000000",
     },
+    "uniswap_v4": {
+        "base-mainnet": "0x6fF5693b99212Da76ad316178A184AB56D299b43",
+        "base-sepolia": "0x0000000000000000000000000000000000000000",
+    },
     "pancakeswap_v2": {
         "base-mainnet": "0x8cFe327CEc66d1C090Dd72bd0FF11d690C33a2Eb",
         "base-sepolia": "0xBbc55276a0b44A69955C3055333E085654F967b4",

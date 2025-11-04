@@ -55,9 +55,30 @@ class MCPClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        self._tune_stream_limits()
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._log_stderr())
         await self._ensure_initialized()
+
+    def _tune_stream_limits(self) -> None:
+        """Increase asyncio stream limits so large MCP payloads do not fail."""
+        process = self.process
+        if not process:
+            return
+
+        target_limit = 1_048_576  # 1 MiB per line is plenty for MCP JSON payloads.
+
+        stdout = getattr(process, "stdout", None)
+        if stdout is not None and hasattr(stdout, "_limit"):
+            current = getattr(stdout, "_limit", 0) or 0
+            if current < target_limit:
+                setattr(stdout, "_limit", target_limit)
+
+        stderr = getattr(process, "stderr", None)
+        if stderr is not None and hasattr(stderr, "_limit"):
+            current = getattr(stderr, "_limit", 0) or 0
+            if current < target_limit:
+                setattr(stderr, "_limit", target_limit)
 
     async def stop(self) -> None:
         """Terminate the process gracefully."""
