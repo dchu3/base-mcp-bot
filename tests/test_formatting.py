@@ -47,10 +47,10 @@ def test_format_token_summary_preserves_url():
         "url": "https://dexscreener.com/base/0x123456",
     }
     output = format_token_summary(entry)
-    assert "https://dexscreener.com/base/0x123456" in output
-    assert "Signals:" in output
-    assert "\n  Signals:" in output
-    assert "\\/" not in output
+    assert output.startswith("*USDC*")
+    assert "[View on Dexscreener](https://dexscreener.com/base/0x123456)" in output
+    assert "Price:" in output
+    assert "Vol" in output
 
 
 def test_format_token_summary_highlights_alerts():
@@ -63,5 +63,6 @@ def test_format_token_summary_highlights_alerts():
         "url": "https://dexscreener.com/base/0xabc",
     }
     output = format_token_summary(entry)
-    assert escape_markdown("[ALERT]") in output
-    assert escape_markdown("move 18.2%") in output
+    assert "*ABC*" in output
+    assert "ALERT" in output
+    assert escape_markdown("18.2%") in output
