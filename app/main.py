@@ -60,7 +60,11 @@ async def main() -> None:
             )
         await application.bot.set_my_commands(commands, scope=scope)
 
-    mcp_manager = MCPManager(settings.mcp_base_server_cmd, settings.mcp_dexscreener_cmd)
+    mcp_manager = MCPManager(
+        base_cmd=settings.mcp_base_server_cmd,
+        dexscreener_cmd=settings.mcp_dexscreener_cmd,
+        honeypot_cmd=settings.mcp_honeypot_cmd,
+    )
     await mcp_manager.start()
 
     router_keys = list(routers.keys())

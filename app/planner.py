@@ -8,7 +8,8 @@ import re
 import textwrap
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Sequence, Set
+import time
+from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple
 from string import Template
 
 import google.generativeai as genai
@@ -35,10 +36,27 @@ class ToolInvocation:
     params: Dict[str, Any]
 
 
+@dataclass
+class HoneypotTarget:
+    """Token (and optional pair) queued for honeypot checks."""
+
+    token: str
+    pair: str | None = None
+
+
 class GeminiPlanner:
     """Use Gemini to decide which MCP tools to call."""
 
     MAX_ROUTER_ITEMS = 8
+    MAX_HONEYPOT_CHECKS = 6
+    HONEYPOT_DISCOVERY_TTL_SECONDS = 900
+    HONEYPOT_NOT_FOUND_TTL_SECONDS = 600
+    DEX_TOKEN_METHODS = {
+        "getPairsByToken",
+        "getTokenOverview",
+        "searchPairs",
+        "getPairByAddress",
+    }
 
     DEFAULT_PROMPT = Template(
         textwrap.dedent(
@@ -50,7 +68,8 @@ class GeminiPlanner:
             2. Determine the relevant router key(s) for network "$network" from: $routers.
             3. Call base.getDexRouterActivity for each router using the user's lookback (fallback $default_lookback minutes) to capture the freshest swaps and the tokens involved.
             4. Cross-reference those token addresses with Dexscreener tools to evaluate price action, liquidity, and unusual volume so you can highlight opportunities or noteworthy movements.
-            5. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
+            5. For each highlighted token, call honeypot.check_token to classify it as SAFE_TO_TRADE, CAUTION, or DO_NOT_TRADE and mention that verdict in your summary.
+            6. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
 
             Available tools (client.method):
             - base.getDexRouterActivity(router: str, sinceMinutes: int)
@@ -60,9 +79,10 @@ class GeminiPlanner:
             - dexscreener.getTokenOverview(tokenAddress: str)
             - dexscreener.searchPairs(query: str)
             - dexscreener.getPairByAddress(pairAddress: str)
+            - honeypot.check_token(address: str, chainId: int, pair?: str, forceSimulateLiquidity?: bool)
 
             Respond strictly as JSON with this schema:
-            {"tools": [{"client": "base|dexscreener", "method": "<method>", "params": {...}}]}
+            {"tools": [{"client": "base|dexscreener|honeypot", "method": "<method>", "params": {...}}]}
             Do not include any commentary outside the JSON payload.
             """
         ).strip()
@@ -85,6 +105,8 @@ class GeminiPlanner:
             Template(prompt_template) if prompt_template is not None else self.DEFAULT_PROMPT
         )
         self.router_map = router_map
+        self._honeypot_discovery_cache: Dict[str, Tuple[float, str | None]] = {}
+        self._honeypot_missing_cache: Dict[str, float] = {}
 
     async def run(self, message: str, context: Dict[str, Any]) -> str:
         plan = await self._plan(message, context)
@@ -133,7 +155,7 @@ class GeminiPlanner:
                 entry.get("params", {}),
                 context.get("network"),
             )
-            if client not in {"base", "dexscreener"} or not method:
+            if client not in {"base", "dexscreener", "honeypot"} or not method:
                 continue
             invocations.append(ToolInvocation(client=client, method=method, params=params))
         if invocations:
@@ -346,6 +368,7 @@ class GeminiPlanner:
         collected_tokens: Dict[str, str] = {}
         planned_token_keys: Set[str] = set()
         chain_id = self._derive_chain_id(context.get("network"))
+        chain_numeric = self._derive_chain_numeric(context.get("network"))
 
         for call in plan:
             try:
@@ -357,9 +380,21 @@ class GeminiPlanner:
                 )
                 if call.client == "base":
                     result = await self.mcp_manager.base.call_tool(call.method, call.params)
-                else:
+                elif call.client == "dexscreener":
                     result = await self.mcp_manager.dexscreener.call_tool(call.method, call.params)
-                results.append({"call": call, "result": result})
+                elif call.client == "honeypot":
+                    if not self.mcp_manager.honeypot:
+                        raise RuntimeError("Honeypot MCP server is not configured")
+                    result = await self.mcp_manager.honeypot.call_tool(call.method, call.params)
+                else:  # pragma: no cover - defensive guard
+                    raise RuntimeError(f"Unsupported MCP client '{call.client}'")
+
+                entry_payload: Dict[str, Any] = {"call": call, "result": result}
+                if call.client == "dexscreener" and call.method in self.DEX_TOKEN_METHODS:
+                    normalized_tokens = self._extract_token_entries(result)
+                    if normalized_tokens:
+                        entry_payload["tokens"] = normalized_tokens
+                results.append(entry_payload)
                 log_extra = {"client": call.client, "method": call.method}
                 if isinstance(result, dict):
                     log_extra["result_keys"] = list(result.keys())[:5]
@@ -404,7 +439,11 @@ class GeminiPlanner:
                     invocation.method,
                     invocation.params,
                 )
-                results.append({"call": invocation, "result": dex_result})
+                entry_payload: Dict[str, Any] = {"call": invocation, "result": dex_result}
+                normalized_tokens = self._extract_token_entries(dex_result)
+                if normalized_tokens:
+                    entry_payload["tokens"] = normalized_tokens
+                results.append(entry_payload)
             except Exception as exc:  # pragma: no cover - network/process errors
                 logger.error(
                     "planner_token_summary_error",
@@ -413,7 +452,298 @@ class GeminiPlanner:
                 )
                 results.append({"call": invocation, "error": str(exc)})
 
+        honeypot_targets = self._select_honeypot_targets(results, collected_tokens)
+        if honeypot_targets:
+            verdicts = await self._fetch_honeypot_verdicts(honeypot_targets, chain_numeric)
+            if verdicts:
+                self._annotate_token_verdicts(results, verdicts)
+
         return results
+
+    def _select_honeypot_targets(
+        self,
+        results: Sequence[Dict[str, Any]],
+        collected_tokens: Dict[str, str],
+    ) -> List[HoneypotTarget]:
+        token_order: List[str] = []
+        metadata: Dict[str, Tuple[str, str | None, float]] = {}
+
+        def register(address: Any, pair: Any = None, liquidity: Any = None) -> None:
+            if not isinstance(address, str) or not address.startswith("0x"):
+                return
+            lowered = address.lower()
+            pair_addr = pair if isinstance(pair, str) and pair.startswith("0x") else None
+            liquidity_value = self._coerce_float(liquidity)
+            if lowered not in metadata:
+                metadata[lowered] = (address, pair_addr, liquidity_value)
+                token_order.append(lowered)
+                return
+            _, existing_pair, existing_liq = metadata[lowered]
+            if liquidity_value > existing_liq:
+                metadata[lowered] = (address, pair_addr or existing_pair, liquidity_value)
+
+        for entry in results:
+            tokens = entry.get("tokens")
+            if not tokens:
+                continue
+            for token in tokens:
+                if not isinstance(token, dict):
+                    continue
+                register(token.get("address"), token.get("pairAddress"), token.get("liquidity"))
+
+        for address in collected_tokens.values():
+            register(address)
+
+        targets: List[HoneypotTarget] = []
+        for lowered in token_order[: self.MAX_HONEYPOT_CHECKS]:
+            original, pair_addr, _ = metadata[lowered]
+            targets.append(HoneypotTarget(token=original, pair=pair_addr))
+        return targets
+
+    async def _fetch_honeypot_verdicts(
+        self,
+        targets: Sequence[HoneypotTarget],
+        chain_id: int,
+    ) -> Dict[str, Dict[str, str]]:
+        client = getattr(self.mcp_manager, "honeypot", None)
+        if not client or not targets:
+            return {}
+        self._ensure_honeypot_cache()
+
+        verdicts: Dict[str, Dict[str, str]] = {}
+        successes = 0
+        fallbacks = 0
+        for target in targets[: self.MAX_HONEYPOT_CHECKS]:
+            token = target.token
+            if not isinstance(token, str) or not token.startswith("0x"):
+                continue
+            verdict = await self._evaluate_honeypot_target(client, token, chain_id, target.pair)
+            if verdict:
+                verdicts[token.lower()] = verdict
+                if verdict.get("reason") == "Token not indexed on Honeypot":
+                    fallbacks += 1
+                else:
+                    successes += 1
+
+        if successes or fallbacks:
+            logger.info(
+                "honeypot_results",
+                success=successes,
+                fallback=fallbacks,
+                checked=len(targets[: self.MAX_HONEYPOT_CHECKS]),
+            )
+
+        return verdicts
+
+    async def _evaluate_honeypot_target(
+        self,
+        client: Any,
+        token: str,
+        chain_id: int,
+        initial_pair: str | None,
+    ) -> Dict[str, str] | None:
+        cache_key = self._honeypot_cache_key(token, chain_id)
+        cached_missing = self._honeypot_missing_cache.get(cache_key)
+        if cached_missing and cached_missing > time.time():
+            logger.debug("honeypot_skip_cached_404", address=token)
+            return {
+                "verdict": "CAUTION",
+                "reason": "Token not indexed on Honeypot",
+            }
+
+        if not initial_pair:
+            cached_pair = self._get_cached_pair(cache_key)
+            if cached_pair:
+                initial_pair = cached_pair
+
+        pair = initial_pair
+        attempted_discovery = bool(pair)
+
+        for _ in range(2):
+            try:
+                result = await self._call_honeypot_check(client, token, chain_id, pair)
+            except Exception as exc:  # pragma: no cover - network/process errors
+                if not attempted_discovery:
+                    attempted_discovery = True
+                    pair = await self._discover_pair_for_token(client, token, chain_id)
+                    if pair:
+                        continue
+                fallback = self._fallback_verdict_from_error(exc)
+                log_fn = logger.info if fallback else logger.warning
+                log_fn("honeypot_check_failed", address=token, pair=pair, error=str(exc))
+                if fallback:
+                    self._honeypot_missing_cache[cache_key] = time.time() + self.HONEYPOT_NOT_FOUND_TTL_SECONDS
+                return fallback
+
+            normalized = self._normalize_honeypot_result(result)
+            if normalized:
+                if pair:
+                    self._honeypot_discovery_cache[cache_key] = (
+                        time.time() + self.HONEYPOT_DISCOVERY_TTL_SECONDS,
+                        pair,
+                    )
+                return normalized
+            return None
+
+        return None
+
+    async def _call_honeypot_check(
+        self,
+        client: Any,
+        token: str,
+        chain_id: int,
+        pair: str | None,
+    ) -> Any:
+        params: Dict[str, Any] = {"address": token}
+        if chain_id:
+            params["chainId"] = chain_id
+        if pair:
+            params["pair"] = pair
+        logger.debug(
+            "honeypot_call",
+            address=token,
+            chainId=chain_id,
+            pair=pair,
+        )
+        return await client.call_tool("check_token", params)
+
+    async def _discover_pair_for_token(
+        self,
+        client: Any,
+        token: str,
+        chain_id: int,
+    ) -> str | None:
+        try:
+            params: Dict[str, Any] = {"address": token}
+            if chain_id:
+                params["chainId"] = chain_id
+            result = await client.call_tool("discover_pairs", params)
+        except Exception as exc:  # pragma: no cover - network/process errors
+            logger.info("honeypot_discover_failed", address=token, error=str(exc))
+            return None
+
+        if isinstance(result, dict):
+            pairs = result.get("pairs")
+        else:
+            pairs = None
+        if not isinstance(pairs, list):
+            return None
+
+        best_pair: str | None = None
+        best_liquidity: float = -1.0
+        for entry in pairs:
+            if not isinstance(entry, dict):
+                continue
+            pair_address = entry.get("pair")
+            if not isinstance(pair_address, str) or not pair_address.startswith("0x"):
+                continue
+            liquidity = entry.get("liquidityUsd")
+            try:
+                liquidity_value = float(liquidity)
+            except (TypeError, ValueError):
+                liquidity_value = -1.0
+            if liquidity_value > best_liquidity:
+                best_liquidity = liquidity_value
+                best_pair = pair_address
+
+        cache_key = self._honeypot_cache_key(token, chain_id)
+        self._honeypot_discovery_cache[cache_key] = (
+            time.time() + self.HONEYPOT_DISCOVERY_TTL_SECONDS,
+            best_pair,
+        )
+        return best_pair
+
+    def _annotate_token_verdicts(
+        self,
+        results: Sequence[Dict[str, Any]],
+        verdicts: Dict[str, Dict[str, str]],
+    ) -> None:
+        if not verdicts:
+            return
+        for entry in results:
+            tokens = entry.get("tokens")
+            if not tokens:
+                continue
+            for token in tokens:
+                self._apply_verdict_to_token(token, verdicts)
+
+    @staticmethod
+    def _normalize_honeypot_result(payload: Any) -> Dict[str, str] | None:
+        if not isinstance(payload, dict):
+            return None
+        summary = payload.get("summary")
+        if not isinstance(summary, dict):
+            return None
+        verdict = summary.get("verdict")
+        reason = summary.get("reason") or summary.get("message")
+        if not verdict:
+            return None
+        normalized: Dict[str, str] = {"verdict": str(verdict)}
+        if isinstance(reason, str) and reason.strip():
+            normalized["reason"] = reason.strip()
+        return normalized
+
+    @staticmethod
+    def _fallback_verdict_from_error(error: Exception) -> Dict[str, str] | None:
+        message = str(error)
+        if not message:
+            return None
+        lowered = message.lower()
+        if "404" in lowered or "not found" in lowered:
+            return {
+                "verdict": "CAUTION",
+                "reason": "Token not indexed on Honeypot",
+            }
+        return None
+
+    @staticmethod
+    def _coerce_float(value: Any) -> float:
+        if value is None:
+            return -1.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return -1.0
+        return -1.0
+
+    def _ensure_honeypot_cache(self) -> None:
+        if not hasattr(self, "_honeypot_discovery_cache"):
+            self._honeypot_discovery_cache = {}
+        if not hasattr(self, "_honeypot_missing_cache"):
+            self._honeypot_missing_cache = {}
+
+    def _honeypot_cache_key(self, token: str, chain_id: int) -> str:
+        lowered = token.lower()
+        return f"{lowered}:{chain_id or 0}"
+
+    def _get_cached_pair(self, cache_key: str) -> str | None:
+        entry = self._honeypot_discovery_cache.get(cache_key)
+        if not entry:
+            return None
+        expires_at, pair = entry
+        if expires_at <= time.time():
+            self._honeypot_discovery_cache.pop(cache_key, None)
+            return None
+        return pair
+
+    @staticmethod
+    def _apply_verdict_to_token(
+        token: Dict[str, Any],
+        verdicts: Dict[str, Dict[str, str]],
+        fallback_address: str | None = None,
+    ) -> None:
+        address = token.get("address") or fallback_address
+        if not isinstance(address, str) or not address:
+            return
+        verdict = verdicts.get(address.lower())
+        if not verdict:
+            return
+        token["riskVerdict"] = verdict.get("verdict", "")
+        if verdict.get("reason"):
+            token["riskReason"] = verdict["reason"]
 
     def _render_response(
         self,
@@ -440,8 +770,8 @@ class GeminiPlanner:
                     router_label = call.params.get("routerKey") or call.params.get("router")
                 continue
 
-            if call.method in {"getPairsByToken", "getTokenOverview", "searchPairs", "getPairByAddress"}:
-                normalized_tokens = self._extract_token_entries(result)
+            if call.method in self.DEX_TOKEN_METHODS:
+                normalized_tokens = entry.get("tokens") or self._extract_token_entries(result)
                 for token in normalized_tokens:
                     dedupe_key = token.get("url") or token.get("symbol") or ""
                     if dedupe_key and dedupe_key in seen_pairs:
@@ -480,16 +810,16 @@ class GeminiPlanner:
         network: str,
     ) -> str | None:
         """Return Dexscreener token summaries suitable for subscription alerts."""
-        addresses = self._collect_token_addresses(transactions)
+        addresses = list(self._collect_token_addresses(transactions))
         if not addresses:
             return None
 
         chain_id = self._derive_chain_id(network)
-        summaries: List[str] = []
-        seen_pairs: Set[str] = set()
-        add_nfa = False
+        chain_numeric = self._derive_chain_numeric(network)
+        address_plan = addresses[: self.MAX_ROUTER_ITEMS]
+        collected_entries: List[Tuple[Dict[str, str], str]] = []
 
-        for address in addresses:
+        for address in address_plan:
             try:
                 result = await self.mcp_manager.dexscreener.call_tool(
                     "getPairsByToken",
@@ -506,21 +836,33 @@ class GeminiPlanner:
             entries = self._extract_token_entries(result)
             if not entries:
                 continue
-            add_nfa = True
             for entry in entries:
-                dedupe_key = entry.get("url") or entry.get("symbol") or ""
-                if dedupe_key and dedupe_key in seen_pairs:
-                    continue
-                if dedupe_key:
-                    seen_pairs.add(dedupe_key)
-                summaries.append(format_token_summary(entry))
-                if len(summaries) >= self.MAX_ROUTER_ITEMS:
-                    break
+                collected_entries.append((entry, address))
+
+        if not collected_entries:
+            return None
+
+        targets = self._select_honeypot_targets([
+            {"tokens": [entry for entry, _ in collected_entries]}
+        ], {})
+        verdicts = await self._fetch_honeypot_verdicts(targets, chain_numeric)
+
+        summaries: List[str] = []
+        seen_pairs: Set[str] = set()
+        add_nfa = False
+
+        for entry, source_address in collected_entries:
+            if verdicts:
+                self._apply_verdict_to_token(entry, verdicts, source_address)
+            dedupe_key = entry.get("url") or entry.get("symbol") or ""
+            if dedupe_key and dedupe_key in seen_pairs:
+                continue
+            if dedupe_key:
+                seen_pairs.add(dedupe_key)
+            summaries.append(format_token_summary(entry))
+            add_nfa = True
             if len(summaries) >= self.MAX_ROUTER_ITEMS:
                 break
-
-        if not summaries:
-            return None
 
         label = router_key or "router"
         header = escape_markdown(f"Dexscreener snapshots for {label}")
@@ -621,13 +963,15 @@ class GeminiPlanner:
                 change = change_obj.get("h24") or change_obj.get("h6")
 
         url = token.get("url") or token.get("dexscreenerUrl")
-        if not url:
-            pair_address = token.get("pairAddress")
-            chain_id = token.get("chainId")
-            if isinstance(pair_address, str) and isinstance(chain_id, str):
-                url = f"https://dexscreener.com/{chain_id}/{pair_address}"
+        pair_address = token.get("pairAddress")
+        chain_identifier = token.get("chainId")
+        if not url and isinstance(pair_address, str) and isinstance(chain_identifier, str):
+            url = f"https://dexscreener.com/{chain_identifier}/{pair_address}"
 
-        return {
+        token_address = token.get("tokenAddress") or token.get("address")
+        if not token_address and isinstance(base_token, dict):
+            token_address = base_token.get("address")
+        normalized = {
             "symbol": str(symbol or "TOKEN"),
             "price": str(price or "?"),
             "volume24h": str(volume or "?"),
@@ -635,6 +979,13 @@ class GeminiPlanner:
             "change24h": str(change or "?"),
             "url": str(url or ""),
         }
+        if token_address:
+            normalized["address"] = str(token_address)
+        if pair_address:
+            normalized["pairAddress"] = str(pair_address)
+        if chain_identifier:
+            normalized["chainId"] = str(chain_identifier)
+        return normalized
 
     @staticmethod
     def _format_timestamp(value: Any) -> str:
@@ -673,3 +1024,19 @@ class GeminiPlanner:
         if lowered in {"base", "base-mainnet"}:
             return "base"
         return lowered.split("-")[0]
+
+    @staticmethod
+    def _derive_chain_numeric(network: Any) -> int:
+        if isinstance(network, (int, float)):
+            return int(network)
+        if isinstance(network, str):
+            lowered = network.lower()
+            if lowered in {"base", "base-mainnet"} or lowered.startswith("base-"):
+                return 8453
+            digits = "".join(ch for ch in lowered if ch.isdigit())
+            if digits:
+                try:
+                    return int(digits)
+                except ValueError:
+                    pass
+        return 8453
