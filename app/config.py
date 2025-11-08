@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         default="node mcp-servers/mcp-dexscreener/index.js",
         alias="MCP_DEXSCREENER_CMD",
     )
+    mcp_honeypot_cmd: str = Field(
+        default="bash -lc \"cd ../base-mcp-honeypot && node dist/server.js stdio\"",
+        alias="MCP_HONEYPOT_CMD",
+    )
 
     base_network: str = Field(default="base-mainnet", alias="BASE_NETWORK")
     routers_json: Optional[Path] = Field(

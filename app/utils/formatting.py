@@ -7,6 +7,12 @@ from typing import Iterable, List, Mapping, Sequence
 
 NOT_FINANCIAL_ADVICE = "DYOR, not financial advice"
 
+HONEYPOT_VERDICT_LABELS = {
+    "SAFE_TO_TRADE": "SAFE TO TRADE",
+    "CAUTION": "CAUTION",
+    "DO_NOT_TRADE": "DO NOT TRADE",
+}
+
 # Movement thresholds for highlighting Dexscreener rows (percentage points).
 SIGNAL_STRONG_THRESHOLD = 15.0
 SIGNAL_WATCH_THRESHOLD = 5.0
@@ -66,6 +72,8 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
     if signal_tag:
         title += f" · {escape_markdown(signal_tag)}"
 
+    risk_line = format_honeypot_verdict(entry.get("riskVerdict"), entry.get("riskReason"))
+
     price_line = f"Price: {escape_markdown(price)}"
     if change and change != "?":
         price_line += f" \\(24h {escape_markdown(change)}\\)"
@@ -79,7 +87,10 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
         metrics.append(f"FDV {escape_markdown(fdv)}")
     metrics_line = " · ".join(metrics)
 
-    lines: List[str] = [title, price_line]
+    lines: List[str] = [title]
+    if risk_line:
+        lines.append(risk_line)
+    lines.append(price_line)
     if metrics_line:
         lines.append(metrics_line)
     if link:
@@ -87,6 +98,20 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
         lines.append(f"[View on Dexscreener]({safe_link})")
 
     return "\n".join(line for line in lines if line)
+
+
+def format_honeypot_verdict(verdict: str | None, reason: str | None = None) -> str | None:
+    """Render a honeypot verdict badge for token summaries."""
+    if not verdict:
+        return None
+    verdict_upper = str(verdict).upper()
+    label = HONEYPOT_VERDICT_LABELS.get(verdict_upper)
+    if not label:
+        return None
+    text = escape_markdown(label)
+    if reason:
+        text += f" — {escape_markdown(reason)}"
+    return text
 
 
 def _parse_percentage(value: str | None) -> float | None:

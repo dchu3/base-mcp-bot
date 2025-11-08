@@ -2,6 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import time
+
 from app.planner import GeminiPlanner, ToolInvocation
 
 
@@ -82,6 +84,23 @@ def test_extract_token_entries_handles_list() -> None:
     }
     entries = planner._extract_token_entries([pair])
     assert entries[0]["symbol"] == "AAA/BBB"
+
+
+def test_select_honeypot_targets_prefers_liquid_pair() -> None:
+    planner = _make_planner()
+    tokens = [
+        {"address": "0xabc", "pairAddress": "0xpair1", "liquidity": "100"},
+        {"address": "0xabc", "pairAddress": "0xpair2", "liquidity": "1000"},
+    ]
+    targets = planner._select_honeypot_targets([{"tokens": tokens}], {})
+    assert targets
+    assert targets[0].pair == "0xpair2"
+
+
+def test_get_cached_pair_expires() -> None:
+    planner = _make_planner()
+    planner._honeypot_discovery_cache = {"token:0": (time.time() - 1, "0xpair")}
+    assert planner._get_cached_pair("token:0") is None
 
 
 def test_derive_chain_id_defaults_to_base() -> None:

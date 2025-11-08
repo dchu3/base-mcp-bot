@@ -66,3 +66,18 @@ def test_format_token_summary_highlights_alerts():
     assert "*ABC*" in output
     assert "ALERT" in output
     assert escape_markdown("18.2%") in output
+
+
+def test_format_token_summary_includes_honeypot_verdict():
+    entry = {
+        "symbol": "XYZ",
+        "price": "$0.01",
+        "volume24h": "1000",
+        "liquidity": "500",
+        "change24h": "1.2%",
+        "riskVerdict": "CAUTION",
+        "riskReason": "High sell tax",
+    }
+    output = format_token_summary(entry)
+    assert "CAUTION" in output
+    assert "High sell tax" in output

@@ -409,14 +409,25 @@ class MCPClient:
 
 
 class MCPManager:
-    """Shared registry for Base and Dexscreener MCP clients."""
+    """Shared registry for configured MCP clients."""
 
-    def __init__(self, base_cmd: str, dexscreener_cmd: str) -> None:
+    def __init__(self, base_cmd: str, dexscreener_cmd: str, honeypot_cmd: str | None = None) -> None:
         self.base = MCPClient("base", base_cmd)
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
+        self.honeypot = (
+            MCPClient("honeypot", honeypot_cmd)
+            if honeypot_cmd and honeypot_cmd.strip()
+            else None
+        )
 
     async def start(self) -> None:
-        await asyncio.gather(self.base.start(), self.dexscreener.start())
+        tasks = [self.base.start(), self.dexscreener.start()]
+        if self.honeypot:
+            tasks.append(self.honeypot.start())
+        await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
-        await asyncio.gather(self.base.stop(), self.dexscreener.stop())
+        tasks = [self.base.stop(), self.dexscreener.stop()]
+        if self.honeypot:
+            tasks.append(self.honeypot.stop())
+        await asyncio.gather(*tasks)
