@@ -706,12 +706,10 @@ class GeminiPlanner:
                 "verdict": "CAUTION",
                 "reason": "Token not indexed on Honeypot",
             }
-        if "honeypot check failed" in lowered:
-            return {
-                "verdict": "ERROR",
-                "reason": "Honeypot check failed",
-            }
-        return None
+        return {
+            "verdict": "ERROR",
+            "reason": "Honeypot check failed",
+        }
 
     @staticmethod
     def _coerce_float(value: Any) -> float:

@@ -36,9 +36,17 @@ def test_normalize_honeypot_result_parses_do_not_trade_verdict():
     assert normalized["reason"] == "High risk of honeypot"
     assert normalized["risk"] == "Has a history of being a honeypot"
 
-def test_fallback_verdict_from_error_returns_error():
+def test_fallback_verdict_from_error_returns_caution_on_404():
     planner = _make_planner()
-    error = Exception("honeypot check failed")
+    error = Exception("Request failed with status code 404")
+    fallback = planner._fallback_verdict_from_error(error)
+    assert fallback is not None
+    assert fallback["verdict"] == "CAUTION"
+    assert fallback["reason"] == "Token not indexed on Honeypot"
+
+def test_fallback_verdict_from_error_returns_error_on_generic_error():
+    planner = _make_planner()
+    error = Exception("Something went wrong")
     fallback = planner._fallback_verdict_from_error(error)
     assert fallback is not None
     assert fallback["verdict"] == "ERROR"
