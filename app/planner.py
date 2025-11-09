@@ -693,6 +693,20 @@ class GeminiPlanner:
                 normalized["risk"] = ", ".join(risk_messages)
         elif isinstance(risks, str):
             normalized["risk"] = risks
+
+        raw_payload = payload.get("raw", {})
+        if isinstance(raw_payload, dict):
+            contract_code = raw_payload.get("contractCode", {})
+            if isinstance(contract_code, dict) and not contract_code.get("openSource"):
+                if normalized.get("verdict") == "SAFE_TO_TRADE":
+                    normalized["verdict"] = "CAUTION"
+                existing_reason = normalized.get("reason", "")
+                new_reason = "Contract source code is not verified"
+                if existing_reason and new_reason not in existing_reason:
+                    normalized["reason"] = f"{existing_reason}, {new_reason}"
+                elif not existing_reason:
+                    normalized["reason"] = new_reason
+
         return normalized
 
     @staticmethod

@@ -13,6 +13,11 @@ def test_normalize_honeypot_result_parses_safe_verdict():
             "verdict": "SAFE_TO_TRADE",
             "reason": "No risks found",
             "risks": []
+        },
+        "raw": {
+            "contractCode": {
+                "openSource": True
+            }
         }
     }
     normalized = planner._normalize_honeypot_result(payload)
@@ -28,6 +33,11 @@ def test_normalize_honeypot_result_parses_do_not_trade_verdict():
             "verdict": "DO_NOT_TRADE",
             "reason": "High risk of honeypot",
             "risks": ["Has a history of being a honeypot"]
+        },
+        "raw": {
+            "contractCode": {
+                "openSource": True
+            }
         }
     }
     normalized = planner._normalize_honeypot_result(payload)
@@ -51,6 +61,24 @@ def test_fallback_verdict_from_error_returns_error_on_generic_error():
     assert fallback is not None
     assert fallback["verdict"] == "ERROR"
     assert fallback["reason"] == "Honeypot check failed"
+
+def test_normalize_honeypot_result_downgrades_verdict_if_not_open_source():
+    planner = _make_planner()
+    payload = {
+        "summary": {
+            "verdict": "SAFE_TO_TRADE",
+            "reason": "No risks found",
+        },
+        "raw": {
+            "contractCode": {
+                "openSource": False
+            }
+        }
+    }
+    normalized = planner._normalize_honeypot_result(payload)
+    assert normalized is not None
+    assert normalized["verdict"] == "CAUTION"
+    assert normalized["reason"] == "No risks found, Contract source code is not verified"
 
 def test_apply_verdict_to_token_applies_verdict():
     planner = _make_planner()
