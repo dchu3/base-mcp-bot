@@ -583,6 +583,8 @@ class GeminiPlanner:
                         pair,
                     )
                 return normalized
+
+            logger.warning("honeypot_check_malformed", address=token, pair=pair, result=result)
             return None
 
         return None
@@ -671,6 +673,7 @@ class GeminiPlanner:
     def _normalize_honeypot_result(payload: Any) -> Dict[str, str] | None:
         if not isinstance(payload, dict):
             return None
+        logger.info("honeypot_raw_payload", payload=payload)
         summary = payload.get("summary")
         if not isinstance(summary, dict):
             return None
@@ -681,6 +684,15 @@ class GeminiPlanner:
         normalized: Dict[str, str] = {"verdict": str(verdict)}
         if isinstance(reason, str) and reason.strip():
             normalized["reason"] = reason.strip()
+        risks = summary.get("risks")
+        if isinstance(risks, list):
+            risk_messages = [
+                str(item) for item in risks if isinstance(item, (str, int, float))
+            ]
+            if risk_messages:
+                normalized["risk"] = ", ".join(risk_messages)
+        elif isinstance(risks, str):
+            normalized["risk"] = risks
         return normalized
 
     @staticmethod
@@ -694,7 +706,10 @@ class GeminiPlanner:
                 "verdict": "CAUTION",
                 "reason": "Token not indexed on Honeypot",
             }
-        return None
+        return {
+            "verdict": "ERROR",
+            "reason": "Honeypot check failed",
+        }
 
     @staticmethod
     def _coerce_float(value: Any) -> float:
@@ -744,6 +759,8 @@ class GeminiPlanner:
         token["riskVerdict"] = verdict.get("verdict", "")
         if verdict.get("reason"):
             token["riskReason"] = verdict["reason"]
+        if verdict.get("risk"):
+            token["risk"] = verdict["risk"]
 
     def _render_response(
         self,
