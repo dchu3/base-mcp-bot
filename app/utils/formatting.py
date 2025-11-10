@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Iterable, List, Mapping, Sequence
 
-NOT_FINANCIAL_ADVICE = "DYOR, not financial advice"
+NOT_FINANCIAL_ADVICE = "All tokens can rug pull. DYOR, not financial advice"
 
 HONEYPOT_VERDICT_LABELS = {
     "SAFE_TO_TRADE": "SAFE TO TRADE",
