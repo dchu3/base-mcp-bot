@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Dict, List
 
 from telegram import Update
 from telegram.error import BadRequest
@@ -11,7 +12,7 @@ from telegram.ext import Application, CallbackContext, CommandHandler, MessageHa
 
 from app.jobs.subscriptions import SubscriptionService
 from app.planner import GeminiPlanner
-from app.store.db import Database
+from app.store.db import Database, TokenContext
 from app.store.repository import Repository
 from app.utils.formatting import escape_markdown
 from app.utils.logging import get_logger
@@ -346,12 +347,34 @@ async def natural_language_handler(update: Update, context: CallbackContext) -> 
 
 async def send_planner_response(update: Update, context: CallbackContext, message: str) -> None:
     ctx = get_ctx(context)
+    target_chat_id = ctx.allowed_chat_id or (update.effective_user.id if update.effective_user else None)
+    user_id: int | None = None
+    recent_tokens: List[Dict[str, str]] = []
+
+    if ctx.db and target_chat_id is not None:
+        async with ctx.db.session() as session:
+            repo = Repository(session)
+            user = await repo.get_or_create_user(target_chat_id)
+            user_id = user.id
+            rows = await repo.list_active_token_context(user.id)
+            recent_tokens = [_serialize_token_context(row) for row in rows]
+
+    recent_router = None
+    if recent_tokens:
+        for token in recent_tokens:
+            if token.get("source"):
+                recent_router = token["source"]
+                break
+
     payload = {
         "network": ctx.network,
         "default_lookback": ctx.default_lookback,
+        "recent_tokens": recent_tokens,
+        "last_router": recent_router or "",
     }
+
     try:
-        response = await ctx.planner.run(message, payload)
+        planner_result = await ctx.planner.run(message, payload)
     except Exception as exc:
         logger.error("planner_execution_failed", error=str(exc))
         if update.message:
@@ -362,26 +385,52 @@ async def send_planner_response(update: Update, context: CallbackContext, messag
                 disable_web_page_preview=True,
             )
         return
-    if update.message:
-        rendered = response.strip() if isinstance(response, str) else ""
-        if not rendered:
-            await update.message.reply_text(
-                "No recent data returned for that request.",
-                disable_web_page_preview=True,
-            )
-            return
-        markdown_text = rendered
-        try:
-            await update.message.reply_text(
-                markdown_text,
-                parse_mode="MarkdownV2",
-                disable_web_page_preview=True,
-            )
-        except BadRequest as exc:
-            logger.warning(
-                "telegram_markdown_failed", error=str(exc), text=markdown_text
-            )
-            await update.message.reply_text(
-                rendered,
-                disable_web_page_preview=True,
-            )
+    response_text = planner_result.message.strip()
+    summary_tokens = planner_result.tokens
+
+    if not update.message:
+        return
+
+    if not response_text:
+        await update.message.reply_text(
+            "No recent data returned for that request.",
+            disable_web_page_preview=True,
+        )
+        return
+
+    try:
+        await update.message.reply_text(
+            response_text,
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+        )
+    except BadRequest as exc:
+        logger.warning("telegram_markdown_failed", error=str(exc), text=response_text)
+        await update.message.reply_text(
+            response_text,
+            disable_web_page_preview=True,
+        )
+
+    if ctx.db and user_id and summary_tokens:
+        async with ctx.db.session() as session:
+            repo = Repository(session)
+            await repo.save_token_context(user_id, summary_tokens)
+
+
+def _serialize_token_context(row: TokenContext) -> Dict[str, str]:
+    payload = {
+        "symbol": row.symbol,
+        "address": row.token_address,
+        "source": row.source,
+    }
+    if row.base_symbol:
+        payload["baseSymbol"] = row.base_symbol
+    if row.token_name:
+        payload["name"] = row.token_name
+    if row.pair_address:
+        payload["pairAddress"] = row.pair_address
+    if row.url:
+        payload["url"] = row.url
+    if row.chain_id:
+        payload["chainId"] = row.chain_id
+    return payload

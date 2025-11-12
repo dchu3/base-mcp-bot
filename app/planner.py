@@ -9,7 +9,7 @@ import textwrap
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import time
-from typing import Any, Dict, Iterable, List, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Set, Tuple
 from string import Template
 
 import google.generativeai as genai
@@ -44,6 +44,22 @@ class HoneypotTarget:
     pair: str | None = None
 
 
+@dataclass
+class PlannerResult:
+    """Rendered planner response plus normalized token context."""
+
+    message: str
+    tokens: List[Dict[str, str]]
+
+
+@dataclass
+class TokenSummary:
+    """Reusable Dexscreener summary payload."""
+
+    message: str
+    tokens: List[Dict[str, str]]
+
+
 class GeminiPlanner:
     """Use Gemini to decide which MCP tools to call."""
 
@@ -65,11 +81,12 @@ class GeminiPlanner:
 
             Follow this workflow:
             1. Analyse the user request: "$message".
-            2. Determine the relevant router key(s) for network "$network" from: $routers.
-            3. Call base.getDexRouterActivity for each router using the user's lookback (fallback $default_lookback minutes) to capture the freshest swaps and the tokens involved.
-            4. Cross-reference those token addresses with Dexscreener tools to evaluate price action, liquidity, and unusual volume so you can highlight opportunities or noteworthy movements.
-            5. For each highlighted token, call honeypot.check_token to classify it as SAFE_TO_TRADE, CAUTION, or DO_NOT_TRADE and mention that verdict in your summary.
-            6. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
+            2. If the user is asking about router activity, determine the relevant router key(s) for network "$network" from: $routers and call base.getDexRouterActivity with the user's lookback (fallback $default_lookback minutes).
+            3. If the user is asking about a token (e.g. "use Dexscreener for LUNA") or references a cached token, prefer calling Dexscreener tools directly using the hints below instead of polling routers.
+            4. Cached tokens (may include router context): $recent_tokens. Use these when matching user intent to token lookups. Most recent router summary: $recent_router.
+            5. Cross-reference discovered token addresses with Dexscreener tools to evaluate price action, liquidity, and unusual volume so you can highlight opportunities or noteworthy movements.
+            6. For each highlighted token, call honeypot.check_token to classify it as SAFE_TO_TRADE, CAUTION, or DO_NOT_TRADE and mention that verdict in your summary.
+            7. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
 
             Available tools (client.method):
             - base.getDexRouterActivity(router: str, sinceMinutes: int)
@@ -108,11 +125,14 @@ class GeminiPlanner:
         self._honeypot_discovery_cache: Dict[str, Tuple[float, str | None]] = {}
         self._honeypot_missing_cache: Dict[str, float] = {}
 
-    async def run(self, message: str, context: Dict[str, Any]) -> str:
+    async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
         plan = await self._plan(message, context)
         if not plan:
             logger.warning("planner_no_plan", message=message)
-            return "I could not determine a suitable tool to answer that. Please rephrase or specify a router/token."
+            return PlannerResult(
+                message="I could not determine a suitable tool to answer that. Please rephrase or specify a router/token.",
+                tokens=[],
+            )
 
         results = await self._execute_plan(plan, context)
         return self._render_response(message, context, results)
@@ -170,16 +190,36 @@ class GeminiPlanner:
 
     def _build_prompt(self, message: str, context: Dict[str, Any]) -> str:
         routers = ", ".join(self.router_keys) or "none"
+        token_hint = self._format_recent_tokens(context.get("recent_tokens") or [])
+        last_router = context.get("last_router") or "unknown"
         context_map = {
             "message": message,
             "network": context.get("network", "base"),
             "routers": routers,
             "default_lookback": context.get("default_lookback", 30),
+            "recent_tokens": token_hint,
+            "recent_router": last_router,
         }
         prompt = self._prompt_template.safe_substitute(context_map)
         if "$" in prompt:
             logger.warning("prompt_unresolved_placeholders", prompt=prompt)
         return prompt
+
+    def _format_recent_tokens(self, tokens: Any) -> str:
+        if not isinstance(tokens, list):
+            return "none"
+        payload: List[Dict[str, str]] = []
+        for token in tokens[:5]:
+            if not isinstance(token, dict):
+                continue
+            entry: Dict[str, str] = {}
+            for key in ("symbol", "baseSymbol", "name", "address", "chainId", "pairAddress", "source"):
+                value = token.get(key)
+                if value:
+                    entry[key] = str(value)
+            if entry:
+                payload.append(entry)
+        return json.dumps(payload) if payload else "none"
 
     @staticmethod
     def _strip_code_fence(text: str) -> str:
@@ -781,12 +821,14 @@ class GeminiPlanner:
         message: str,
         context: Dict[str, Any],
         results: Iterable[Dict[str, Any]],
-    ) -> str:
+    ) -> PlannerResult:
         sections: List[str] = []
         token_lines: List[str] = []
         add_nfa = False
         router_label: str | None = None
         seen_pairs: Set[str] = set()
+        context_tokens: List[Dict[str, str]] = []
+        context_seen: Set[str] = set()
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -810,6 +852,18 @@ class GeminiPlanner:
                     if dedupe_key:
                         seen_pairs.add(dedupe_key)
                     token_lines.append(format_token_summary(token))
+                    context_entry = self._build_token_context_entry(
+                        token,
+                        call.params.get("routerKey")
+                        or call.params.get("router")
+                        or call.method,
+                    )
+                    context_key = context_entry.get("address") or context_entry.get("symbol")
+                    if context_key and context_key in context_seen:
+                        continue
+                    if context_key:
+                        context_seen.add(context_key)
+                    context_tokens.append(context_entry)
                 if normalized_tokens:
                     add_nfa = True
                 continue
@@ -827,27 +881,47 @@ class GeminiPlanner:
                         join_messages(token_lines[: self.MAX_ROUTER_ITEMS]),
                     ]
                 ),
-            )
+        )
 
         summary = join_messages(sections)
         if add_nfa:
             summary = append_not_financial_advice(summary)
-        return summary or "No recent data returned for that request."
+        message_text = summary or "No recent data returned for that request."
+        return PlannerResult(message=message_text, tokens=context_tokens)
 
     async def summarize_transactions(
         self,
         router_key: str,
         transactions: Iterable[Dict[str, Any]],
         network: str,
-    ) -> str | None:
+    ) -> TokenSummary | None:
         """Return Dexscreener token summaries suitable for subscription alerts."""
         addresses = list(self._collect_token_addresses(transactions))
         if not addresses:
             return None
+        return await self._build_token_summary(addresses, router_key, network)
 
+    async def summarize_tokens_from_context(
+        self,
+        addresses: Sequence[str],
+        label: str,
+        network: str,
+    ) -> TokenSummary | None:
+        """Fetch Dexscreener data for explicit token addresses."""
+        filtered = [addr for addr in addresses if isinstance(addr, str) and addr]
+        if not filtered:
+            return None
+        return await self._build_token_summary(filtered, label, network)
+
+    async def _build_token_summary(
+        self,
+        addresses: Sequence[str],
+        label: str,
+        network: str,
+    ) -> TokenSummary | None:
         chain_id = self._derive_chain_id(network)
         chain_numeric = self._derive_chain_numeric(network)
-        address_plan = addresses[: self.MAX_ROUTER_ITEMS]
+        address_plan = list(dict.fromkeys(addresses))[: self.MAX_ROUTER_ITEMS]
         collected_entries: List[Tuple[Dict[str, str], str]] = []
 
         for address in address_plan:
@@ -880,6 +954,7 @@ class GeminiPlanner:
 
         summaries: List[str] = []
         seen_pairs: Set[str] = set()
+        context_tokens: List[Dict[str, str]] = []
         add_nfa = False
 
         for entry, source_address in collected_entries:
@@ -891,12 +966,14 @@ class GeminiPlanner:
             if dedupe_key:
                 seen_pairs.add(dedupe_key)
             summaries.append(format_token_summary(entry))
+            context_tokens.append(
+                self._build_token_context_entry(entry, label or source_address)
+            )
             add_nfa = True
             if len(summaries) >= self.MAX_ROUTER_ITEMS:
                 break
 
-        label = router_key or "router"
-        header = escape_markdown(f"Dexscreener snapshots for {label}")
+        header = escape_markdown(f"Dexscreener snapshots for {label or 'router'}")
         message = join_messages(
             [
                 header,
@@ -905,7 +982,7 @@ class GeminiPlanner:
         )
         if add_nfa:
             message = append_not_financial_advice(message)
-        return message
+        return TokenSummary(message=message, tokens=context_tokens)
 
     def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
         router_key = call.params.get("routerKey")
@@ -1010,6 +1087,13 @@ class GeminiPlanner:
             "change24h": str(change or "?"),
             "url": str(url or ""),
         }
+        if base_symbol:
+            normalized["baseSymbol"] = str(base_symbol)
+        token_name = token.get("name")
+        if not token_name and isinstance(base_token, dict):
+            token_name = base_token.get("name")
+        if token_name:
+            normalized["name"] = str(token_name)
         if token_address:
             normalized["address"] = str(token_address)
         if pair_address:
@@ -1017,6 +1101,29 @@ class GeminiPlanner:
         if chain_identifier:
             normalized["chainId"] = str(chain_identifier)
         return normalized
+
+    @staticmethod
+    def _build_token_context_entry(token: Mapping[str, Any], source: str | None = None) -> Dict[str, str]:
+        entry: Dict[str, str] = {}
+        for key, target in (
+            ("symbol", "symbol"),
+            ("baseSymbol", "baseSymbol"),
+            ("name", "name"),
+            ("address", "address"),
+            ("tokenAddress", "address"),
+            ("pairAddress", "pairAddress"),
+            ("chainId", "chainId"),
+            ("url", "url"),
+        ):
+            value = token.get(key)
+            if not value:
+                continue
+            if target == "address" and "address" in entry:
+                continue
+            entry[target] = str(value)
+        if source:
+            entry["source"] = str(source)
+        return entry
 
     @staticmethod
     def _format_timestamp(value: Any) -> str:

@@ -2,6 +2,7 @@ import pytest
 from telegram.error import BadRequest
 
 from app.jobs.subscriptions import SubscriptionService
+from app.planner import TokenSummary
 from app.store.db import Database, Subscription
 from app.store.repository import Repository
 from app.utils.routers import DEFAULT_ROUTERS
@@ -57,7 +58,7 @@ class FallbackBot(DummyBot):
 
 
 class DummyPlanner:
-    def __init__(self, summary: str | None) -> None:
+    def __init__(self, summary: TokenSummary | None) -> None:
         self.summary = summary
         self.calls = []
 
@@ -86,7 +87,7 @@ async def test_process_subscription_handles_dict_payload(tmp_path) -> None:
     }
 
     base_client = DummyBaseClient(payload)
-    planner = DummyPlanner("Dex summary")
+    planner = DummyPlanner(TokenSummary(message="Dex summary", tokens=[]))
     service = SubscriptionService(
         scheduler=DummyScheduler(),
         db=db,
@@ -152,7 +153,7 @@ async def test_process_subscription_handles_nested_item_dict(tmp_path) -> None:
 
     base_client = DummyBaseClient(payload)
     bot = DummyBot()
-    planner = DummyPlanner("Dex nested summary")
+    planner = DummyPlanner(TokenSummary(message="Dex nested summary", tokens=[]))
     service = SubscriptionService(
         scheduler=DummyScheduler(),
         db=db,
@@ -186,7 +187,7 @@ async def test_process_subscription_ignores_unexpected_payload(tmp_path) -> None
     await db.init_models()
 
     base_client = DummyBaseClient("unexpected")
-    planner = DummyPlanner("ignored")
+    planner = DummyPlanner(TokenSummary(message="ignored", tokens=[]))
     service = SubscriptionService(
         scheduler=DummyScheduler(),
         db=db,
@@ -231,7 +232,7 @@ async def test_process_subscription_falls_back_to_plain_text(tmp_path) -> None:
 
     base_client = DummyBaseClient(payload)
     bot = FallbackBot()
-    planner = DummyPlanner("Dex fallback summary")
+    planner = DummyPlanner(TokenSummary(message="Dex fallback summary", tokens=[]))
     service = SubscriptionService(
         scheduler=DummyScheduler(),
         db=db,
