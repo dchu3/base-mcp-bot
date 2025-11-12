@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import html
-from typing import Iterable, List, Mapping, Sequence
+from typing import List, Mapping, Sequence
 
 NOT_FINANCIAL_ADVICE = "All tokens can rug pull. DYOR, not financial advice"
 
@@ -47,7 +46,9 @@ def format_transaction(entry: Mapping[str, str]) -> str:
     if amount:
         summary += f" \\({escape_markdown(amount)}\\)"
     if explorer:
-        summary += f" — [{escape_markdown(tx_hash[:8] + '…')}]({escape_markdown(explorer)})"
+        summary += (
+            f" — [{escape_markdown(tx_hash[:8] + '…')}]({escape_markdown(explorer)})"
+        )
     else:
         summary += f" — `{escape_markdown(tx_hash)}`"
     return summary
@@ -72,7 +73,9 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
     if signal_tag:
         title += f" · {escape_markdown(signal_tag)}"
 
-    risk_line = format_honeypot_verdict(entry.get("riskVerdict"), entry.get("riskReason"))
+    risk_line = format_honeypot_verdict(
+        entry.get("riskVerdict"), entry.get("riskReason")
+    )
 
     price_line = f"Price: {escape_markdown(price)}"
     if change and change != "?":
@@ -100,7 +103,9 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def format_honeypot_verdict(verdict: str | None, reason: str | None = None) -> str | None:
+def format_honeypot_verdict(
+    verdict: str | None, reason: str | None = None
+) -> str | None:
     """Render a honeypot verdict badge for token summaries."""
     if not verdict:
         return None

@@ -83,7 +83,7 @@ class GeminiPlanner:
             1. Analyse the user request: "$message".
             2. If the user is asking about router activity, determine the relevant router key(s) for network "$network" from: $routers and call base.getDexRouterActivity with the user's lookback (fallback $default_lookback minutes).
             3. If the user is asking about a token (e.g. "use Dexscreener for LUNA") or references a cached token, prefer calling Dexscreener tools directly using the hints below instead of polling routers.
-            4. Cached tokens (may include router context): $recent_tokens. Use these when matching user intent to token lookups. Most recent router summary: $recent_router.
+            4. Cached tokens (recent router context + user watchlist hints): $recent_tokens. Use these when matching user intent to token lookups. Most recent router summary: $recent_router.
             5. Cross-reference discovered token addresses with Dexscreener tools to evaluate price action, liquidity, and unusual volume so you can highlight opportunities or noteworthy movements.
             6. For each highlighted token, call honeypot.check_token to classify it as SAFE_TO_TRADE, CAUTION, or DO_NOT_TRADE and mention that verdict in your summary.
             7. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
@@ -119,7 +119,9 @@ class GeminiPlanner:
         self.mcp_manager = mcp_manager
         self.router_keys = router_keys
         self._prompt_template = (
-            Template(prompt_template) if prompt_template is not None else self.DEFAULT_PROMPT
+            Template(prompt_template)
+            if prompt_template is not None
+            else self.DEFAULT_PROMPT
         )
         self.router_map = router_map
         self._honeypot_discovery_cache: Dict[str, Tuple[float, str | None]] = {}
@@ -137,7 +139,9 @@ class GeminiPlanner:
         results = await self._execute_plan(plan, context)
         return self._render_response(message, context, results)
 
-    async def _plan(self, message: str, context: Dict[str, Any]) -> List[ToolInvocation]:
+    async def _plan(
+        self, message: str, context: Dict[str, Any]
+    ) -> List[ToolInvocation]:
         prompt = self._build_prompt(message, context)
         logger.info("planner_prompt", prompt=prompt)
         response = await asyncio.to_thread(
@@ -177,12 +181,18 @@ class GeminiPlanner:
             )
             if client not in {"base", "dexscreener", "honeypot"} or not method:
                 continue
-            invocations.append(ToolInvocation(client=client, method=method, params=params))
+            invocations.append(
+                ToolInvocation(client=client, method=method, params=params)
+            )
         if invocations:
             logger.info(
                 "planner_plan",
                 plan=[
-                    {"client": call.client, "method": call.method, "params": call.params}
+                    {
+                        "client": call.client,
+                        "method": call.method,
+                        "params": call.params,
+                    }
                     for call in invocations
                 ],
             )
@@ -213,7 +223,15 @@ class GeminiPlanner:
             if not isinstance(token, dict):
                 continue
             entry: Dict[str, str] = {}
-            for key in ("symbol", "baseSymbol", "name", "address", "chainId", "pairAddress", "source"):
+            for key in (
+                "symbol",
+                "baseSymbol",
+                "name",
+                "address",
+                "chainId",
+                "pairAddress",
+                "source",
+            ):
                 value = token.get(key)
                 if value:
                     entry[key] = str(value)
@@ -271,7 +289,9 @@ class GeminiPlanner:
                     address = network_map.get(network_str)
                     if address:
                         normalized["router"] = address
-            elif isinstance(original_router_value, str) and not original_router_value.startswith("0x"):
+            elif isinstance(
+                original_router_value, str
+            ) and not original_router_value.startswith("0x"):
                 normalized.setdefault("routerKey", original_router_value)
                 if network_str and original_router_value in self.router_map:
                     network_map = self.router_map.get(original_router_value, {})
@@ -299,7 +319,11 @@ class GeminiPlanner:
     def _extract_token_param(params: Dict[str, Any]) -> str | None:
         if not isinstance(params, dict):
             return None
-        token = params.get("tokenAddress") or params.get("token") or params.get("pairAddress")
+        token = (
+            params.get("tokenAddress")
+            or params.get("token")
+            or params.get("pairAddress")
+        )
         if isinstance(token, str) and token:
             return token
         return None
@@ -419,18 +443,27 @@ class GeminiPlanner:
                     params=call.params,
                 )
                 if call.client == "base":
-                    result = await self.mcp_manager.base.call_tool(call.method, call.params)
+                    result = await self.mcp_manager.base.call_tool(
+                        call.method, call.params
+                    )
                 elif call.client == "dexscreener":
-                    result = await self.mcp_manager.dexscreener.call_tool(call.method, call.params)
+                    result = await self.mcp_manager.dexscreener.call_tool(
+                        call.method, call.params
+                    )
                 elif call.client == "honeypot":
                     if not self.mcp_manager.honeypot:
                         raise RuntimeError("Honeypot MCP server is not configured")
-                    result = await self.mcp_manager.honeypot.call_tool(call.method, call.params)
+                    result = await self.mcp_manager.honeypot.call_tool(
+                        call.method, call.params
+                    )
                 else:  # pragma: no cover - defensive guard
                     raise RuntimeError(f"Unsupported MCP client '{call.client}'")
 
                 entry_payload: Dict[str, Any] = {"call": call, "result": result}
-                if call.client == "dexscreener" and call.method in self.DEX_TOKEN_METHODS:
+                if (
+                    call.client == "dexscreener"
+                    and call.method in self.DEX_TOKEN_METHODS
+                ):
                     normalized_tokens = self._extract_token_entries(result)
                     if normalized_tokens:
                         entry_payload["tokens"] = normalized_tokens
@@ -479,7 +512,10 @@ class GeminiPlanner:
                     invocation.method,
                     invocation.params,
                 )
-                entry_payload: Dict[str, Any] = {"call": invocation, "result": dex_result}
+                entry_payload: Dict[str, Any] = {
+                    "call": invocation,
+                    "result": dex_result,
+                }
                 normalized_tokens = self._extract_token_entries(dex_result)
                 if normalized_tokens:
                     entry_payload["tokens"] = normalized_tokens
@@ -494,7 +530,9 @@ class GeminiPlanner:
 
         honeypot_targets = self._select_honeypot_targets(results, collected_tokens)
         if honeypot_targets:
-            verdicts = await self._fetch_honeypot_verdicts(honeypot_targets, chain_numeric)
+            verdicts = await self._fetch_honeypot_verdicts(
+                honeypot_targets, chain_numeric
+            )
             if verdicts:
                 self._annotate_token_verdicts(results, verdicts)
 
@@ -512,7 +550,9 @@ class GeminiPlanner:
             if not isinstance(address, str) or not address.startswith("0x"):
                 return
             lowered = address.lower()
-            pair_addr = pair if isinstance(pair, str) and pair.startswith("0x") else None
+            pair_addr = (
+                pair if isinstance(pair, str) and pair.startswith("0x") else None
+            )
             liquidity_value = self._coerce_float(liquidity)
             if lowered not in metadata:
                 metadata[lowered] = (address, pair_addr, liquidity_value)
@@ -520,7 +560,11 @@ class GeminiPlanner:
                 return
             _, existing_pair, existing_liq = metadata[lowered]
             if liquidity_value > existing_liq:
-                metadata[lowered] = (address, pair_addr or existing_pair, liquidity_value)
+                metadata[lowered] = (
+                    address,
+                    pair_addr or existing_pair,
+                    liquidity_value,
+                )
 
         for entry in results:
             tokens = entry.get("tokens")
@@ -529,7 +573,11 @@ class GeminiPlanner:
             for token in tokens:
                 if not isinstance(token, dict):
                     continue
-                register(token.get("address"), token.get("pairAddress"), token.get("liquidity"))
+                register(
+                    token.get("address"),
+                    token.get("pairAddress"),
+                    token.get("liquidity"),
+                )
 
         for address in collected_tokens.values():
             register(address)
@@ -557,7 +605,9 @@ class GeminiPlanner:
             token = target.token
             if not isinstance(token, str) or not token.startswith("0x"):
                 continue
-            verdict = await self._evaluate_honeypot_target(client, token, chain_id, target.pair)
+            verdict = await self._evaluate_honeypot_target(
+                client, token, chain_id, target.pair
+            )
             if verdict:
                 verdicts[token.lower()] = verdict
                 if verdict.get("reason") == "Token not indexed on Honeypot":
@@ -610,9 +660,13 @@ class GeminiPlanner:
                         continue
                 fallback = self._fallback_verdict_from_error(exc)
                 log_fn = logger.info if fallback else logger.warning
-                log_fn("honeypot_check_failed", address=token, pair=pair, error=str(exc))
+                log_fn(
+                    "honeypot_check_failed", address=token, pair=pair, error=str(exc)
+                )
                 if fallback:
-                    self._honeypot_missing_cache[cache_key] = time.time() + self.HONEYPOT_NOT_FOUND_TTL_SECONDS
+                    self._honeypot_missing_cache[cache_key] = (
+                        time.time() + self.HONEYPOT_NOT_FOUND_TTL_SECONDS
+                    )
                 return fallback
 
             normalized = self._normalize_honeypot_result(result)
@@ -624,7 +678,9 @@ class GeminiPlanner:
                     )
                 return normalized
 
-            logger.warning("honeypot_check_malformed", address=token, pair=pair, result=result)
+            logger.warning(
+                "honeypot_check_malformed", address=token, pair=pair, result=result
+            )
             return None
 
         return None
@@ -840,11 +896,15 @@ class GeminiPlanner:
             result = entry.get("result")
             if call.method == "getDexRouterActivity":
                 if router_label is None:
-                    router_label = call.params.get("routerKey") or call.params.get("router")
+                    router_label = call.params.get("routerKey") or call.params.get(
+                        "router"
+                    )
                 continue
 
             if call.method in self.DEX_TOKEN_METHODS:
-                normalized_tokens = entry.get("tokens") or self._extract_token_entries(result)
+                normalized_tokens = entry.get("tokens") or self._extract_token_entries(
+                    result
+                )
                 for token in normalized_tokens:
                     dedupe_key = token.get("url") or token.get("symbol") or ""
                     if dedupe_key and dedupe_key in seen_pairs:
@@ -858,7 +918,9 @@ class GeminiPlanner:
                         or call.params.get("router")
                         or call.method,
                     )
-                    context_key = context_entry.get("address") or context_entry.get("symbol")
+                    context_key = context_entry.get("address") or context_entry.get(
+                        "symbol"
+                    )
                     if context_key and context_key in context_seen:
                         continue
                     if context_key:
@@ -868,7 +930,9 @@ class GeminiPlanner:
                     add_nfa = True
                 continue
 
-            sections.append(f"*{title}*:\n```\n{json.dumps(result, indent=2)[:1500]}\n```")
+            sections.append(
+                f"*{title}*:\n```\n{json.dumps(result, indent=2)[:1500]}\n```"
+            )
 
         if token_lines:
             label = router_label or "selected router"
@@ -881,7 +945,7 @@ class GeminiPlanner:
                         join_messages(token_lines[: self.MAX_ROUTER_ITEMS]),
                     ]
                 ),
-        )
+            )
 
         summary = join_messages(sections)
         if add_nfa:
@@ -947,9 +1011,9 @@ class GeminiPlanner:
         if not collected_entries:
             return None
 
-        targets = self._select_honeypot_targets([
-            {"tokens": [entry for entry, _ in collected_entries]}
-        ], {})
+        targets = self._select_honeypot_targets(
+            [{"tokens": [entry for entry, _ in collected_entries]}], {}
+        )
         verdicts = await self._fetch_honeypot_verdicts(targets, chain_numeric)
 
         summaries: List[str] = []
@@ -1044,7 +1108,9 @@ class GeminiPlanner:
         base_token = token.get("baseToken", {})
         quote_token = token.get("quoteToken", {})
         base_symbol = base_token.get("symbol") if isinstance(base_token, dict) else None
-        quote_symbol = quote_token.get("symbol") if isinstance(quote_token, dict) else None
+        quote_symbol = (
+            quote_token.get("symbol") if isinstance(quote_token, dict) else None
+        )
         pair_label = None
         if base_symbol and quote_symbol:
             pair_label = f"{base_symbol}/{quote_symbol}"
@@ -1073,7 +1139,11 @@ class GeminiPlanner:
         url = token.get("url") or token.get("dexscreenerUrl")
         pair_address = token.get("pairAddress")
         chain_identifier = token.get("chainId")
-        if not url and isinstance(pair_address, str) and isinstance(chain_identifier, str):
+        if (
+            not url
+            and isinstance(pair_address, str)
+            and isinstance(chain_identifier, str)
+        ):
             url = f"https://dexscreener.com/{chain_identifier}/{pair_address}"
 
         token_address = token.get("tokenAddress") or token.get("address")
@@ -1103,7 +1173,9 @@ class GeminiPlanner:
         return normalized
 
     @staticmethod
-    def _build_token_context_entry(token: Mapping[str, Any], source: str | None = None) -> Dict[str, str]:
+    def _build_token_context_entry(
+        token: Mapping[str, Any], source: str | None = None
+    ) -> Dict[str, str]:
         entry: Dict[str, str] = {}
         for key, target in (
             ("symbol", "symbol"),

@@ -36,6 +36,13 @@ The tags appear in brackets before the token pair, followed by a second line of 
 - `/unsubscribe <router>` removes a single alert; `/unsubscribe_all` clears every stored router.
 - The scheduler runs every `SCHEDULER_INTERVAL_MINUTES` (configurable in `.env`) and polls each subscription. New swaps trigger Dexscreener token snapshots (matching `/latest` formatting) so alerts stay focused on actionable liquidity and price signals.
 
+### Token watchlist
+
+- `/watch <token_address> [symbol] [label]` saves a token for follow-up reports (symbol/label are optional and can be updated later).
+- `/watchlist` prints every saved token along with its address.
+- `/unwatch <token_address>` removes a single entry; `/unwatch_all` clears the watchlist.
+- Watchlisted tokens feed the scheduler so the bot can pull Base transactions, Dexscreener stats, and Honeypot verdicts for each saved contract.
+
 ### Prompt template
 
 Edit `prompts/planner.md` (or point `PLANNER_PROMPT_FILE` elsewhere) to tune how the Gemini planner selects tools. Use `$message`, `$network`, `$routers`, and `$default_lookback` placeholders to inject runtime context. The prompt must still instruct Gemini to output strict JSON describing the tool calls.

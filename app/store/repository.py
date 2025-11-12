@@ -6,9 +6,8 @@ from datetime import datetime, timedelta
 from typing import Iterable, Mapping, Optional, Sequence
 
 from sqlalchemy import select, text
-from sqlmodel import SQLModel
 
-from .db import SeenTxn, Subscription, TokenContext, User
+from .db import SeenTxn, Subscription, TokenContext, TokenWatch, User
 
 TOKEN_CONTEXT_TTL_MINUTES = 60
 
@@ -157,7 +156,9 @@ class Repository:
         if getattr(self, "_token_context_schema_ok", False):
             return
         try:
-            result = await self.session.execute(text("PRAGMA table_info('tokencontext')"))
+            result = await self.session.execute(
+                text("PRAGMA table_info('tokencontext')")
+            )
         except Exception:
             # Table may not exist yet; init_models will create it later.
             self._token_context_schema_ok = True
@@ -173,3 +174,71 @@ class Repository:
         if alters:
             await self.session.commit()
         self._token_context_schema_ok = True
+
+    async def list_watch_tokens(self, user_id: int) -> Iterable[TokenWatch]:
+        result = await self.session.execute(
+            select(TokenWatch)
+            .where(TokenWatch.user_id == user_id)
+            .order_by(TokenWatch.created_at)
+        )
+        return result.scalars().all()
+
+    async def add_watch_token(
+        self,
+        user_id: int,
+        token_address: str,
+        token_symbol: str | None = None,
+        label: str | None = None,
+    ) -> TokenWatch:
+        normalized_address = self._normalize_address(token_address)
+        result = await self.session.execute(
+            select(TokenWatch).where(
+                TokenWatch.user_id == user_id,
+                TokenWatch.token_address == normalized_address,
+            )
+        )
+        watch = result.scalar_one_or_none()
+        if watch:
+            if token_symbol is not None:
+                watch.token_symbol = token_symbol
+            if label is not None:
+                watch.label = label
+        else:
+            watch = TokenWatch(
+                user_id=user_id,
+                token_address=normalized_address,
+                token_symbol=token_symbol,
+                label=label,
+            )
+            self.session.add(watch)
+        await self.session.commit()
+        await self.session.refresh(watch)
+        return watch
+
+    async def remove_watch_token(self, user_id: int, token_address: str) -> None:
+        await self.session.execute(
+            TokenWatch.__table__.delete().where(
+                TokenWatch.user_id == user_id,
+                TokenWatch.token_address == self._normalize_address(token_address),
+            )
+        )
+        await self.session.commit()
+
+    async def remove_all_watch_tokens(self, user_id: int) -> None:
+        await self.session.execute(
+            TokenWatch.__table__.delete().where(TokenWatch.user_id == user_id)
+        )
+        await self.session.commit()
+
+    async def all_watch_tokens(self) -> Iterable[TokenWatch]:
+        result = await self.session.execute(
+            select(TokenWatch).order_by(TokenWatch.created_at)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    def _normalize_address(value: str) -> str:
+        trimmed = (value or "").strip()
+        if trimmed.startswith("0x"):
+            return trimmed.lower()
+        return trimmed

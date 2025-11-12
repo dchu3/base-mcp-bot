@@ -128,3 +128,56 @@ async def test_token_context_schema_upgrade(tmp_path):
         rows = await repo.list_active_token_context(user.id)
         assert len(rows) == 1
         assert rows[0].symbol == "AAA/BBB"
+
+
+@pytest.mark.asyncio
+async def test_token_watch_crud(tmp_path):
+    db_path = tmp_path / "watch.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    async with db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(42)
+        other = await repo.get_or_create_user(43)
+
+        await repo.add_watch_token(
+            user.id, "0xaaa", token_symbol="AAA", label="First token"
+        )
+        await repo.add_watch_token(user.id, "0xbbb", token_symbol="BBB")
+        await repo.add_watch_token(other.id, "0xccc", token_symbol="CCC")
+
+        user_tokens = await repo.list_watch_tokens(user.id)
+        assert [token.token_address for token in user_tokens] == ["0xaaa", "0xbbb"]
+
+        await repo.add_watch_token(
+            user.id, "0xaaa", token_symbol="AAA-NEW", label="Renamed"
+        )
+        user_tokens = await repo.list_watch_tokens(user.id)
+        assert user_tokens[0].token_symbol == "AAA-NEW"
+        assert user_tokens[0].label == "Renamed"
+
+        await repo.add_watch_token(
+            user.id,
+            "0xAAA",
+            token_symbol="AAA-LOWER",
+        )
+        user_tokens = await repo.list_watch_tokens(user.id)
+        assert len(user_tokens) == 2
+        assert user_tokens[0].token_address == "0xaaa"
+        assert user_tokens[0].token_symbol == "AAA-LOWER"
+
+        await repo.add_watch_token(user.id, "0xaaa")
+        user_tokens = await repo.list_watch_tokens(user.id)
+        assert user_tokens[0].label == "Renamed"
+
+        await repo.remove_watch_token(user.id, "0xbbb")
+        user_tokens = await repo.list_watch_tokens(user.id)
+        assert len(user_tokens) == 1
+
+        await repo.remove_all_watch_tokens(user.id)
+        assert await repo.list_watch_tokens(user.id) == []
+
+        all_tokens = await repo.all_watch_tokens()
+        assert [token.token_address for token in all_tokens] == ["0xccc"]

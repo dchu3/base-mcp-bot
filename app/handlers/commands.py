@@ -8,11 +8,17 @@ from typing import Dict, List
 
 from telegram import Update
 from telegram.error import BadRequest
-from telegram.ext import Application, CallbackContext, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackContext,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from app.jobs.subscriptions import SubscriptionService
 from app.planner import GeminiPlanner
-from app.store.db import Database, TokenContext
+from app.store.db import Database, TokenContext, TokenWatch
 from app.store.repository import Repository
 from app.utils.formatting import escape_markdown
 from app.utils.logging import get_logger
@@ -47,6 +53,10 @@ def setup(application: Application, handler_context: HandlerContext) -> None:
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("unsubscribe_all", unsubscribe_all_command))
+    application.add_handler(CommandHandler("watch", watch_command))
+    application.add_handler(CommandHandler("watchlist", watchlist_command))
+    application.add_handler(CommandHandler("unwatch", unwatch_command))
+    application.add_handler(CommandHandler("unwatch_all", unwatch_all_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, natural_language_handler)
@@ -64,7 +74,9 @@ async def ensure_user(update: Update, context: CallbackContext) -> bool:
     if allowed_chat_id is not None:
         if chat is None or chat.id != allowed_chat_id:
             if update.message:
-                await update.message.reply_text("This bot is restricted to the configured chat.")
+                await update.message.reply_text(
+                    "This bot is restricted to the configured chat."
+                )
             return False
     if update.effective_user is None:
         return False
@@ -96,6 +108,10 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "/unsubscribe_all — stop all router updates\n"
         "/subscriptions — list your current router alerts\n"
         "/routers — list supported router keys\n\n"
+        "/watch <token_address> [symbol] [label] — add/update a watchlist entry\n"
+        "/watchlist — show your saved tokens\n"
+        "/unwatch <token_address> — remove a single token\n"
+        "/unwatch_all — clear the entire watchlist\n\n"
         "You can also ask natural-language questions like "
         "'latest uniswap_v3 swaps last 15 minutes'."
     )
@@ -118,8 +134,10 @@ async def routers_command(update: Update, context: CallbackContext) -> None:
                 f"• {escape_markdown(key)} — not available on {escape_markdown(ctx.network)}"
             )
     header = escape_markdown(f"Routers for {ctx.network}:")
-    message = "\n".join([header, *lines]) if lines else escape_markdown(
-        f"No routers configured for {ctx.network}."
+    message = (
+        "\n".join([header, *lines])
+        if lines
+        else escape_markdown(f"No routers configured for {ctx.network}.")
     )
     await update.message.reply_text(message, parse_mode="MarkdownV2")
 
@@ -279,6 +297,117 @@ async def unsubscribe_all_command(update: Update, context: CallbackContext) -> N
     await update.message.reply_text("All subscriptions removed.")
 
 
+async def watch_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    args = list(getattr(context, "args", []))
+    if not args:
+        await update.message.reply_text(
+            "Usage: /watch <token_address> [symbol] [label]"
+        )
+        return
+    token_address = _normalize_token_address(args[0])
+    if not token_address:
+        await update.message.reply_text(
+            "Provide a valid Base token address (0x-prefixed, 42 characters)."
+        )
+        return
+    token_symbol = args[1] if len(args) > 1 else None
+    label = " ".join(args[2:]).strip() if len(args) > 2 else None
+    if label == "":
+        label = None
+
+    target_id = ctx.allowed_chat_id or update.effective_user.id
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_id)
+        watch = await repo.add_watch_token(
+            user.id,
+            token_address,
+            token_symbol,
+            label,
+        )
+
+    descriptor = watch.token_symbol or watch.label or watch.token_address
+    suffix = f" ({watch.label})" if watch.label and descriptor != watch.label else ""
+    await update.message.reply_text(
+        f"Watchlist updated: {descriptor}{suffix} at {token_address}."
+    )
+
+
+async def watchlist_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    target_id = ctx.allowed_chat_id or update.effective_user.id
+
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_id)
+        tokens = await repo.list_watch_tokens(user.id)
+
+    if not tokens:
+        await update.message.reply_text("Your watchlist is empty.")
+        return
+
+    header = escape_markdown("Your watchlist:")
+    lines = []
+    seen_addresses = set()
+    for token in tokens:
+        address = (token.token_address or "").lower()
+        if address in seen_addresses:
+            continue
+        seen_addresses.add(address)
+        display = token.token_symbol or token.label or token.token_address
+        entry = (
+            f"• {escape_markdown(display)} — `{escape_markdown(token.token_address)}`"
+        )
+        if token.label and display != token.label:
+            entry += f" \\({escape_markdown(token.label)}\\)"
+        lines.append(entry)
+    message = "\n".join([header, *lines])
+    await update.message.reply_text(message, parse_mode="MarkdownV2")
+
+
+async def unwatch_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    args = list(getattr(context, "args", []))
+    if not args:
+        await update.message.reply_text("Usage: /unwatch <token_address>")
+        return
+    token_address = _normalize_token_address(args[0])
+    if not token_address:
+        await update.message.reply_text(
+            "Provide a valid Base token address (0x-prefixed, 42 characters)."
+        )
+        return
+
+    target_id = ctx.allowed_chat_id or update.effective_user.id
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_id)
+        await repo.remove_watch_token(user.id, token_address)
+
+    await update.message.reply_text(f"Removed {token_address} from your watchlist.")
+
+
+async def unwatch_all_command(update: Update, context: CallbackContext) -> None:
+    if not await ensure_user(update, context):
+        return
+    ctx = get_ctx(context)
+    target_id = ctx.allowed_chat_id or update.effective_user.id
+
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_id)
+        await repo.remove_all_watch_tokens(user.id)
+
+    await update.message.reply_text("Watchlist cleared.")
+
+
 async def set_network(update: Update, context: CallbackContext) -> None:
     ctx = get_ctx(context)
     args = context.args
@@ -297,7 +426,9 @@ async def set_default_lookback(update: Update, context: CallbackContext) -> None
         await update.message.reply_text("Usage: /setlookback <minutes>")
         return
     ctx.default_lookback = int(args[0])
-    await update.message.reply_text(f"Default lookback set to {ctx.default_lookback} minutes.")
+    await update.message.reply_text(
+        f"Default lookback set to {ctx.default_lookback} minutes."
+    )
 
 
 async def set_max_items(update: Update, context: CallbackContext) -> None:
@@ -312,7 +443,9 @@ def admin_only(func):
         if allowed_chat_id is not None:
             if chat is None or chat.id != allowed_chat_id:
                 if update.message:
-                    await update.message.reply_text("This bot is restricted to the configured chat.")
+                    await update.message.reply_text(
+                        "This bot is restricted to the configured chat."
+                    )
                 return
         user_id = update.effective_user.id if update.effective_user else None
         if user_id not in ctx.admin_ids:
@@ -345,11 +478,16 @@ async def natural_language_handler(update: Update, context: CallbackContext) -> 
     await send_planner_response(update, context, message)
 
 
-async def send_planner_response(update: Update, context: CallbackContext, message: str) -> None:
+async def send_planner_response(
+    update: Update, context: CallbackContext, message: str
+) -> None:
     ctx = get_ctx(context)
-    target_chat_id = ctx.allowed_chat_id or (update.effective_user.id if update.effective_user else None)
+    target_chat_id = ctx.allowed_chat_id or (
+        update.effective_user.id if update.effective_user else None
+    )
     user_id: int | None = None
     recent_tokens: List[Dict[str, str]] = []
+    watchlist_tokens: List[Dict[str, str]] = []
 
     if ctx.db and target_chat_id is not None:
         async with ctx.db.session() as session:
@@ -358,6 +496,22 @@ async def send_planner_response(update: Update, context: CallbackContext, messag
             user_id = user.id
             rows = await repo.list_active_token_context(user.id)
             recent_tokens = [_serialize_token_context(row) for row in rows]
+            watch_entries = await repo.list_watch_tokens(user.id)
+            watchlist_tokens = [
+                _serialize_watch_token(entry) for entry in watch_entries
+            ]
+
+    if watchlist_tokens:
+        seen = {
+            token.get("address") for token in recent_tokens if isinstance(token, dict)
+        }
+        for token in watchlist_tokens:
+            address = token.get("address")
+            if address and address in seen:
+                continue
+            if address:
+                seen.add(address)
+            recent_tokens.append(token)
 
     recent_router = None
     if recent_tokens:
@@ -371,6 +525,7 @@ async def send_planner_response(update: Update, context: CallbackContext, messag
         "default_lookback": ctx.default_lookback,
         "recent_tokens": recent_tokens,
         "last_router": recent_router or "",
+        "watchlist_tokens": watchlist_tokens,
     }
 
     try:
@@ -434,3 +589,24 @@ def _serialize_token_context(row: TokenContext) -> Dict[str, str]:
     if row.chain_id:
         payload["chainId"] = row.chain_id
     return payload
+
+
+def _serialize_watch_token(entry: TokenWatch) -> Dict[str, str]:
+    symbol = entry.token_symbol or entry.label or entry.token_address
+    payload = {
+        "symbol": symbol,
+        "address": entry.token_address,
+        "source": "watchlist",
+    }
+    if entry.label:
+        payload["label"] = entry.label
+    return payload
+
+
+def _normalize_token_address(value: str | None) -> str | None:
+    if not value:
+        return None
+    address = value.strip()
+    if address.startswith("0x") and len(address) == 42:
+        return address.lower()
+    return None

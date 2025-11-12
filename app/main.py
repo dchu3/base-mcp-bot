@@ -45,6 +45,10 @@ async def main() -> None:
         BotCommand("subscribe", "Subscribe to router updates"),
         BotCommand("unsubscribe", "Stop router updates"),
         BotCommand("unsubscribe_all", "Stop all router updates"),
+        BotCommand("watch", "Add a token to your watchlist"),
+        BotCommand("watchlist", "Show saved tokens"),
+        BotCommand("unwatch", "Remove a token from the watchlist"),
+        BotCommand("unwatch_all", "Clear the watchlist"),
     ]
 
     await application.bot.delete_my_commands(scope=BotCommandScopeDefault())
@@ -56,7 +60,8 @@ async def main() -> None:
             await application.bot.delete_my_commands(scope=scope)
         except BadRequest:
             logger.warning(
-                "telegram_command_scope_delete_failed", chat_id=settings.telegram_chat_id
+                "telegram_command_scope_delete_failed",
+                chat_id=settings.telegram_chat_id,
             )
         await application.bot.set_my_commands(commands, scope=scope)
 

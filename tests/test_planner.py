@@ -202,7 +202,9 @@ async def test_summarize_transactions_returns_token_summary() -> None:
         {"hash": "0x2", "token1Address": "0xToken"},
     ]
 
-    summary = await planner.summarize_transactions("uniswap_v3", transactions, "base-mainnet")
+    summary = await planner.summarize_transactions(
+        "uniswap_v3", transactions, "base-mainnet"
+    )
 
     assert summary is not None
     assert "Dexscreener snapshots for uniswap\\_v3" in summary.message
