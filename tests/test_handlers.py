@@ -2,11 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.handlers.commands import (
-    HandlerContext,
-    send_planner_response,
-    subscriptions_command,
-)
+from app.handlers.commands import HandlerContext, send_planner_response, subscriptions_command
+from app.planner import PlannerResult
 from app.store.db import Database
 from app.store.repository import Repository
 from app.utils.routers import DEFAULT_ROUTERS
@@ -14,11 +11,14 @@ from app.utils.formatting import escape_markdown
 
 
 class DummyPlanner:
-    def __init__(self, result: str = "") -> None:
-        self.result = result
+    def __init__(self, message: str = "", tokens: list | None = None) -> None:
+        self.result = PlannerResult(message=message, tokens=tokens or [])
 
-    async def run(self, message: str, payload: dict) -> str:
+    async def run(self, message: str, payload: dict) -> PlannerResult:
         return self.result
+
+    async def summarize_tokens_from_context(self, addresses, label, network):
+        return None
 
 
 class DummyMessage:
@@ -30,12 +30,21 @@ class DummyMessage:
 
 
 @pytest.mark.asyncio
-async def test_send_planner_response_uses_escaped_fallback() -> None:
+async def test_send_planner_response_uses_escaped_fallback(tmp_path) -> None:
+    db_path = tmp_path / "bot.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
     message = DummyMessage()
-    update = SimpleNamespace(message=message)
-    planner = DummyPlanner(result="")
+    update = SimpleNamespace(
+        message=message,
+        effective_user=SimpleNamespace(id=1),
+        effective_chat=SimpleNamespace(id=1),
+    )
+    planner = DummyPlanner(message="")
     handler_ctx = HandlerContext(
-        db=None,
+        db=db,
         planner=planner,
         rate_limiter=None,
         routers={},
@@ -49,7 +58,7 @@ async def test_send_planner_response_uses_escaped_fallback() -> None:
         application=SimpleNamespace(bot_data={"ctx": handler_ctx})
     )
 
-    await send_planner_response(update, context, "anything")
+    await send_planner_response(update, context, "anything dexscreener")
 
     assert len(message.calls) == 1
     text, kwargs = message.calls[0]

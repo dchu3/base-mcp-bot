@@ -37,6 +37,20 @@ class SeenTxn(SQLModel, table=True):
     first_seen_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TokenContext(SQLModel, table=True):
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    token_address: str = Field(primary_key=True)
+    symbol: str = Field(index=True)
+    source: str | None = Field(default=None)
+    base_symbol: str | None = Field(default=None)
+    token_name: str | None = Field(default=None)
+    pair_address: str | None = Field(default=None)
+    url: str | None = Field(default=None)
+    chain_id: str | None = Field(default=None)
+    saved_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Database:
     """Lightweight async database wrapper."""
 
@@ -89,4 +103,5 @@ __all__ = [
     "Subscription",
     "Setting",
     "SeenTxn",
+    "TokenContext",
 ]

@@ -8,7 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.error import BadRequest
 
 from app.mcp_client import MCPManager
-from app.planner import GeminiPlanner
+from app.planner import GeminiPlanner, TokenSummary
 from app.store.db import Database, Subscription
 from app.store.repository import Repository
 from app.utils.formatting import escape_markdown, join_messages
@@ -118,7 +118,7 @@ class SubscriptionService:
         )
 
         if summary:
-            message = summary
+            message = summary.message
         else:
             message = join_messages(
                 [
@@ -127,6 +127,13 @@ class SubscriptionService:
                         f" in the last {subscription.lookback_minutes} minutes."
                     ),
                 ]
+            )
+
+        if summary and user:
+            await repo.save_token_context(
+                user.id,
+                summary.tokens,
+                source=subscription.router_key,
             )
 
         try:

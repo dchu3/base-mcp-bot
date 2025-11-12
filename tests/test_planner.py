@@ -1,8 +1,8 @@
+import json
+import time
 from types import SimpleNamespace
 
 import pytest
-
-import time
 
 from app.planner import GeminiPlanner, ToolInvocation
 
@@ -86,6 +86,23 @@ def test_extract_token_entries_handles_list() -> None:
     assert entries[0]["symbol"] == "AAA/BBB"
 
 
+def test_format_recent_tokens_outputs_json() -> None:
+    planner = _make_planner()
+    tokens = [
+        {
+            "symbol": "AAA/BBB",
+            "baseSymbol": "AAA",
+            "name": "Token AAA",
+            "address": "0xabc",
+            "source": "uniswap_v3",
+        }
+    ]
+    payload = planner._format_recent_tokens(tokens)
+    data = json.loads(payload)
+    assert data[0]["baseSymbol"] == "AAA"
+    assert data[0]["source"] == "uniswap_v3"
+
+
 def test_select_honeypot_targets_prefers_liquid_pair() -> None:
     planner = _make_planner()
     tokens = [
@@ -148,9 +165,11 @@ def test_render_response_prefers_token_summaries() -> None:
         ],
     )
 
-    assert "Recent transactions" not in response
-    assert "Dexscreener snapshots for uniswap\\_v3" in response
-    assert "AAA/BBB" in response
+    assert isinstance(response.message, str)
+    assert "Recent transactions" not in response.message
+    assert "Dexscreener snapshots for uniswap\\_v3" in response.message
+    assert "AAA/BBB" in response.message
+    assert response.tokens
 
 
 @pytest.mark.asyncio
@@ -186,6 +205,7 @@ async def test_summarize_transactions_returns_token_summary() -> None:
     summary = await planner.summarize_transactions("uniswap_v3", transactions, "base-mainnet")
 
     assert summary is not None
-    assert "Dexscreener snapshots for uniswap\\_v3" in summary
-    assert "AAA/BBB" in summary
+    assert "Dexscreener snapshots for uniswap\\_v3" in summary.message
+    assert "AAA/BBB" in summary.message
+    assert summary.tokens
     assert fake_dex.calls
