@@ -146,10 +146,14 @@ class MCPClient:
                     try:
                         await self._handle_request_or_notification(payload)
                     except Exception as exc:  # pragma: no cover - defensive logging
-                        logger.error("mcp_message_handler_failed", name=self.name, error=str(exc))
+                        logger.error(
+                            "mcp_message_handler_failed", name=self.name, error=str(exc)
+                        )
                     continue
 
-                logger.warning("unexpected_mcp_message", name=self.name, payload=payload)
+                logger.warning(
+                    "unexpected_mcp_message", name=self.name, payload=payload
+                )
         finally:
             exit_code = process.returncode if process else None
             if exit_code is None and process:
@@ -201,7 +205,10 @@ class MCPClient:
 
         if isinstance(result, dict):
             if result.get("isError"):
-                message = self._extract_content_text(result.get("content")) or "MCP tool call failed."
+                message = (
+                    self._extract_content_text(result.get("content"))
+                    or "MCP tool call failed."
+                )
                 raise RuntimeError(message)
 
             structured = result.get("structuredContent")
@@ -247,10 +254,14 @@ class MCPClient:
                 await self._send_notification("notifications/initialized", {})
             except Exception as exc:
                 await self.stop()
-                raise RuntimeError(f"MCP server {self.name} failed to initialize: {exc}") from exc
+                raise RuntimeError(
+                    f"MCP server {self.name} failed to initialize: {exc}"
+                ) from exc
 
             try:
-                tools = await asyncio.wait_for(self._send_request("tools/list", {}), timeout=10)
+                tools = await asyncio.wait_for(
+                    self._send_request("tools/list", {}), timeout=10
+                )
                 if isinstance(tools, dict):
                     names = [
                         tool.get("name")
@@ -283,7 +294,9 @@ class MCPClient:
                     if names:
                         logger.info("mcp_tools_refreshed", name=self.name, tools=names)
             except Exception as exc:  # pragma: no cover - best-effort refresh
-                logger.warning("mcp_tools_refresh_failed", name=self.name, error=str(exc))
+                logger.warning(
+                    "mcp_tools_refresh_failed", name=self.name, error=str(exc)
+                )
             return
 
         if "id" in payload:
@@ -318,7 +331,9 @@ class MCPClient:
         else:
             future.set_result(payload.get("result"))
 
-    async def _send_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def _send_request(
+        self, method: str, params: Optional[Dict[str, Any]] = None
+    ) -> Any:
         if not self.process or not self.process.stdin:
             raise RuntimeError(f"MCP process {self.name} is not running")
 
@@ -342,7 +357,9 @@ class MCPClient:
                 self._pending.pop(request_id, None)
                 if not future.done():
                     future.set_exception(
-                        RuntimeError(f"Failed to write to MCP process {self.name}: {exc}")
+                        RuntimeError(
+                            f"Failed to write to MCP process {self.name}: {exc}"
+                        )
                     )
                 raise RuntimeError(f"MCP process {self.name} is unavailable") from exc
 
@@ -376,7 +393,9 @@ class MCPClient:
                 }
             )
 
-    async def _send_error_response(self, request_id: Any, code: int, message: str) -> None:
+    async def _send_error_response(
+        self, request_id: Any, code: int, message: str
+    ) -> None:
         async with self._lock:
             await self._write_locked(
                 {
@@ -411,7 +430,9 @@ class MCPClient:
 class MCPManager:
     """Shared registry for configured MCP clients."""
 
-    def __init__(self, base_cmd: str, dexscreener_cmd: str, honeypot_cmd: str | None = None) -> None:
+    def __init__(
+        self, base_cmd: str, dexscreener_cmd: str, honeypot_cmd: str | None = None
+    ) -> None:
         self.base = MCPClient("base", base_cmd)
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
         self.honeypot = (

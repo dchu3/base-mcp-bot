@@ -51,6 +51,14 @@ class TokenContext(SQLModel, table=True):
     expires_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TokenWatch(SQLModel, table=True):
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    token_address: str = Field(primary_key=True)
+    token_symbol: str | None = Field(default=None, index=True)
+    label: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Database:
     """Lightweight async database wrapper."""
 
@@ -104,4 +112,5 @@ __all__ = [
     "Setting",
     "SeenTxn",
     "TokenContext",
+    "TokenWatch",
 ]

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         alias="MCP_DEXSCREENER_CMD",
     )
     mcp_honeypot_cmd: str = Field(
-        default="bash -lc \"cd ../base-mcp-honeypot && node dist/server.js stdio\"",
+        default='bash -lc "cd ../base-mcp-honeypot && node dist/server.js stdio"',
         alias="MCP_HONEYPOT_CMD",
     )
 
@@ -101,7 +101,9 @@ def load_settings() -> Settings:
     """Return cached Settings instance, raising a helpful message on failure."""
     try:
         return Settings()
-    except ValidationError as exc:  # pragma: no cover - configuration failure visible on boot
+    except (
+        ValidationError
+    ) as exc:  # pragma: no cover - configuration failure visible on boot
         raise RuntimeError(f"Invalid configuration: {exc}") from exc
 
 

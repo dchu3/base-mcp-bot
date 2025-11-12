@@ -5,6 +5,7 @@ from app.jobs.subscriptions import SubscriptionService
 from app.planner import TokenSummary
 from app.store.db import Database, Subscription
 from app.store.repository import Repository
+from app.utils.formatting import append_not_financial_advice
 from app.utils.routers import DEFAULT_ROUTERS
 
 
@@ -18,18 +19,21 @@ class DummyScheduler:
     def start(self) -> None:  # pragma: no cover - not used in tests
         self.running = True
 
-    def shutdown(self, wait: bool = False) -> None:  # pragma: no cover - not used in tests
+    def shutdown(
+        self, wait: bool = False
+    ) -> None:  # pragma: no cover - not used in tests
         self.running = False
 
 
 class DummyBaseClient:
-    def __init__(self, payload):
+    def __init__(self, payload, responses: dict | None = None):
         self.payload = payload
+        self.responses = responses or {}
         self.calls = []
 
     async def call_tool(self, method: str, params: dict) -> dict:
         self.calls.append((method, params))
-        return self.payload
+        return self.responses.get(method, self.payload)
 
 
 class DummyMCPManager:
@@ -61,10 +65,16 @@ class DummyPlanner:
     def __init__(self, summary: TokenSummary | None) -> None:
         self.summary = summary
         self.calls = []
+        self.watch_summary = summary
+        self.watch_calls = []
 
     async def summarize_transactions(self, router_key, transactions, network):
         self.calls.append((router_key, transactions, network))
         return self.summary
+
+    async def summarize_tokens_from_context(self, addresses, label, network):
+        self.watch_calls.append((addresses, label, network))
+        return self.watch_summary
 
 
 @pytest.mark.asyncio
@@ -306,4 +316,65 @@ async def test_process_subscription_handles_missing_summary(tmp_path) -> None:
     assert len(bot.calls) == 1
     payload = bot.calls[0]
     assert payload["parse_mode"] == "MarkdownV2"
-    assert "No Dexscreener summaries for uniswap_v2" in payload["text"].replace("\\", "")
+    assert "No Dexscreener summaries for uniswap_v2" in payload["text"].replace(
+        "\\", ""
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
+    db_path = tmp_path / "watch.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    token_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    transfer_payload = {
+        "items": [
+            {
+                "hash": "0xwatch",
+                "timestamp": "2024-01-04T00:00:00Z",
+                "value": "12345",
+                "symbol": "AAA",
+                "method": "Transfer",
+            }
+        ]
+    }
+    base_client = DummyBaseClient(
+        payload={},
+        responses={"getTokenTransfers": transfer_payload},
+    )
+    bot = DummyBot()
+    planner = DummyPlanner(None)
+    planner.watch_summary = TokenSummary(
+        message=append_not_financial_advice("Dex block"),
+        tokens=[{"address": token_address, "symbol": "AAA"}],
+    )
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=db,
+        mcp_manager=DummyMCPManager(base_client),
+        planner=planner,
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=bot,
+        interval_minutes=5,
+    )
+
+    async with db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(202)
+        await repo.add_watch_token(user.id, token_address, label="Alpha token")
+        await repo.add_watch_token(user.id, token_address.upper())
+        await service._process_watchlists(repo)
+        tokens = await repo.list_watch_tokens(user.id)
+
+    assert len(bot.calls) == 1
+    message = bot.calls[0]
+    assert "Dex block" in message["text"]
+    assert "All tokens can rug pull" in message["text"].replace("\\", "")
+    assert message["parse_mode"] == "MarkdownV2"
+    assert base_client.calls and base_client.calls[0][0] == "getTokenTransfers"
+    assert planner.watch_calls
+    assert planner.watch_calls[0][1] == "watchlist (1 token)"
+    assert tokens[0].token_symbol == "AAA"
