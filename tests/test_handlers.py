@@ -27,7 +27,9 @@ class DummyPlanner:
         self.last_payload = payload
         return self.result
 
-    async def summarize_tokens_from_context(self, addresses, label, network):
+    async def summarize_tokens_from_context(
+        self, addresses, label, network, token_insights=None
+    ):
         return None
 
 

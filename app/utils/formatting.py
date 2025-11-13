@@ -90,12 +90,19 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
         metrics.append(f"FDV {escape_markdown(fdv)}")
     metrics_line = " · ".join(metrics)
 
+    activity_summary = entry.get("activitySummary")
+    activity_details = entry.get("activityDetails")
+
     lines: List[str] = [title]
     if risk_line:
         lines.append(risk_line)
     lines.append(price_line)
     if metrics_line:
         lines.append(metrics_line)
+    if activity_summary:
+        lines.append(f"Transfers: {escape_markdown(activity_summary)}")
+    if activity_details:
+        lines.append(activity_details)
     if link:
         safe_link = escape_markdown_url(link)
         lines.append(f"[View on Dexscreener]({safe_link})")

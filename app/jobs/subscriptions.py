@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Set
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.error import BadRequest
@@ -18,7 +18,7 @@ from app.utils.formatting import (
     NOT_FINANCIAL_ADVICE,
     append_not_financial_advice,
     escape_markdown,
-    format_transaction,
+    escape_markdown_url,
     join_messages,
 )
 from app.utils.logging import get_logger
@@ -227,8 +227,11 @@ class SubscriptionService:
                 break
 
         token_addresses = list(unique_addresses.values())
+        watchlist_lower = {addr.lower(): addr for addr in token_addresses}
         unique_count = len(token_addresses)
 
+        insights = await self._collect_watchlist_insights(deduped_tokens)
+        planner_insights = self._prepare_planner_insights(insights)
         summary: TokenSummary | None = None
         if token_addresses:
             try:
@@ -237,6 +240,7 @@ class SubscriptionService:
                     f"watchlist ({unique_count} token"
                     f"{'s' if unique_count != 1 else ''})",
                     self.network,
+                    token_insights=planner_insights or None,
                 )
                 if summary and summary.tokens:
                     for token_entry in summary.tokens:
@@ -258,11 +262,33 @@ class SubscriptionService:
                     error=str(exc),
                 )
 
-        activity_sections = await self._build_watchlist_activity(deduped_tokens)
+        used_addresses = self._extract_summary_addresses(summary)
+        activity_sections = self._build_insight_sections(insights, used_addresses)
+        if not summary and not activity_sections:
+            logger.info("watchlist_transfers_disabled_notice")
+            activity_sections = [escape_markdown(self.WATCHLIST_TRANSFERS_DISABLED)]
+
+        summary_links: List[str] = []
+        if summary:
+            for addr in used_addresses:
+                original = watchlist_lower.get(addr)
+                if not original:
+                    continue
+                url = self._dexscreener_url(original)
+                if url:
+                    summary_links.append(
+                        f"[View on Dexscreener]({escape_markdown_url(url)})"
+                    )
 
         sections: List[str] = []
         if summary and summary.message:
-            sections.append(self._strip_nfa(summary.message))
+            summary_payload = self._strip_nfa(summary.message)
+            if summary_links and "View on Dexscreener" not in summary_payload:
+                link_block = "\n".join(summary_links)
+                summary_payload = "\n".join(
+                    part for part in [summary_payload, link_block] if part
+                )
+            sections.append(summary_payload)
         if activity_sections:
             sections.append(join_messages(activity_sections))
 
@@ -285,61 +311,142 @@ class SubscriptionService:
                 disable_web_page_preview=True,
             )
 
-    async def _build_watchlist_activity(
+    async def _collect_watchlist_insights(
         self, tokens: Sequence[TokenWatch]
-    ) -> List[str]:
+    ) -> Dict[str, Dict[str, str]]:
         if not tokens:
-            return []
+            return {}
         cutoff = datetime.now(timezone.utc) - timedelta(
             minutes=self.WATCH_ACTIVITY_LOOKBACK_MINUTES
         )
-        sections: List[str] = []
+        insights: Dict[str, Dict[str, str]] = {}
         for token in tokens:
-            section = await self._render_watch_token_activity(token, cutoff)
-            if section:
-                sections.append(section)
-        if not sections:
-            logger.info("watchlist_transfers_disabled_notice")
-            return [escape_markdown(self.WATCHLIST_TRANSFERS_DISABLED)]
-        return sections
+            insight = await self._build_watch_token_insight(token, cutoff)
+            if insight:
+                insights[insight["address"]] = insight
+        return insights
 
-    async def _render_watch_token_activity(
+    async def _build_watch_token_insight(
         self, token: TokenWatch, cutoff: datetime
-    ) -> str | None:
+    ) -> Dict[str, str] | None:
         address = (token.token_address or "").strip()
         if not address:
             return None
+        normalized_addr = address.lower()
         logs, metadata, error = await self._fetch_transfer_logs(
             address, self.MAX_WATCH_TRANSFER_FETCH
         )
         if not metadata:
             metadata = await self._get_token_metadata(address)
 
-        recent_logs = (
-            self._filter_recent_logs(logs, cutoff) if logs else []
-        )[: self.MAX_WATCH_TXNS]
-        entries: List[str] = []
+        recent_logs = (self._filter_recent_logs(logs, cutoff) if logs else [])[
+            : self.MAX_WATCH_TXNS
+        ]
+        structured_events: List[Dict[str, Any]] = []
         for entry in recent_logs:
             normalized = self._normalize_watch_transfer(entry, metadata)
             if normalized:
-                entries.append(format_transaction(normalized))
-
+                structured_events.append(
+                    {
+                        "timestamp": normalized.get("timestamp"),
+                        "amount": normalized.get("raw_amount")
+                        or normalized.get("amount"),
+                        "from": normalized.get("fromAddress"),
+                        "to": normalized.get("toAddress"),
+                        "hash": normalized.get("hash"),
+                    }
+                )
         display_label = (
             (token.label or "").strip()
             or (token.token_symbol or "").strip()
             or self._short_address(address)
         )
         lookback = self.WATCH_ACTIVITY_LOOKBACK_MINUTES
+        summary_text: str | None = None
+        if structured_events:
+            try:
+                summary_text = await self.planner.summarize_transfer_activity(
+                    display_label, structured_events
+                )
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "watchlist_transfer_summary_failed",
+                    token=address,
+                    error=str(exc),
+                )
+        if not summary_text:
+            summary_text = error or f"No transfers in the last {lookback} minutes."
+
+        detail_block = ""
+        link = self._dexscreener_url(address)
+        return {
+            "address": normalized_addr,
+            "original_address": address,
+            "label": display_label,
+            "summary": summary_text,
+            "details": detail_block,
+            "link": link,
+        }
+
+    def _prepare_planner_insights(
+        self, insights: Mapping[str, Dict[str, str]]
+    ) -> Dict[str, Dict[str, str]]:
+        payload: Dict[str, Dict[str, str]] = {}
+        for addr, info in insights.items():
+            summary = info.get("summary")
+            details = info.get("details")
+            if not summary and not details:
+                continue
+            payload[addr] = {
+                "activitySummary": summary or "",
+                "activityDetails": details or "",
+            }
+        return payload
+
+    def _build_insight_sections(
+        self, insights: Mapping[str, Dict[str, str]], used_addresses: Set[str]
+    ) -> List[str]:
+        sections: List[str] = []
+        for addr, info in insights.items():
+            if addr in used_addresses:
+                continue
+            section = self._format_insight_section(info)
+            if section:
+                sections.append(section)
+        return sections
+
+    def _format_insight_section(self, info: Mapping[str, str]) -> str | None:
+        label = info.get("label")
+        summary = info.get("summary")
+        details = info.get("details")
+        link = info.get("link")
+        if not label and not summary and not details:
+            return None
+        lookback = self.WATCH_ACTIVITY_LOOKBACK_MINUTES
         header = (
-            f"*{escape_markdown(display_label)}* transfers "
+            f"*{escape_markdown(label or 'Token')}* transfers "
             f"\\(last {lookback}m\\)"
         )
-        if entries:
-            body = "\n".join(entries)
-            return "\n".join([header, body])
+        lines = [header]
+        if summary:
+            lines.append(escape_markdown(summary))
+        if details:
+            lines.append(details)
+        if link:
+            safe_url = escape_markdown_url(str(link))
+            lines.append(f"[View on Dexscreener]({safe_url})")
+        return "\n".join(lines)
 
-        fallback = error or f"No transfers in the last {lookback} minutes."
-        return "\n".join([header, escape_markdown(fallback)])
+    @staticmethod
+    def _extract_summary_addresses(summary: TokenSummary | None) -> Set[str]:
+        if not summary or not summary.tokens:
+            return set()
+        used: Set[str] = set()
+        for token in summary.tokens:
+            address = token.get("address")
+            if isinstance(address, str):
+                used.add(address.lower())
+        return used
 
     async def _fetch_transfer_logs(
         self, token_address: str, page_size: int
@@ -354,7 +461,7 @@ class SubscriptionService:
 
         params = {
             "address": token_address,
-            "pageSize": page_size,
+            "pageSize": max(1, min(page_size, self.MAX_WATCH_TRANSFER_FETCH)),
         }
 
         last_error: str | None = None
@@ -384,12 +491,13 @@ class SubscriptionService:
                     error_type=type(exc).__name__,
                     duration_ms=round(duration, 2),
                 )
+                if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+                    break
                 if attempt < self.TRANSFER_FETCH_RETRIES:
                     await asyncio.sleep(delay)
                     delay *= 2
                 continue
 
-            metadata: Dict[str, Any] | None = None
             items = payload.get("items") if isinstance(payload, dict) else None
             if not isinstance(items, list):
                 return [], None, "no transfer data returned"
@@ -401,6 +509,7 @@ class SubscriptionService:
                 duration_ms=round(duration, 2),
                 item_count=len(items),
             )
+            metadata: Dict[str, Any] | None = None
             normalized: List[Dict[str, Any]] = []
             for event in items:
                 if not metadata:
@@ -416,10 +525,14 @@ class SubscriptionService:
 
         if last_error:
             self._transfer_error_cache[normalized_addr] = (
-                now + self.TRANSFER_FAILURE_TTL_SECONDS
+                now + self._transfer_failure_ttl()
             )
             return [], None, last_error
         return [], None, "transfer fetch failed"
+
+    def _transfer_failure_ttl(self) -> float:
+        interval_seconds = max(1, self.interval_minutes) * 60
+        return max(self.TRANSFER_FAILURE_TTL_SECONDS, interval_seconds)
 
     def _filter_recent_logs(
         self, logs: Sequence[Dict[str, Any]], cutoff: datetime
@@ -470,9 +583,15 @@ class SubscriptionService:
         return {
             "method": "Transfer",
             "amount": amount_display,
+            "raw_amount": amount,
             "timestamp": timestamp,
             "hash": str(hash_value),
             "explorer_url": explorer,
+            "fromAddress": from_addr,
+            "toAddress": to_addr,
+            "tokenSymbol": (
+                metadata.get("symbol") if isinstance(metadata, dict) else None
+            ),
         }
 
     def _strip_nfa(self, message: str) -> str:
@@ -567,6 +686,21 @@ class SubscriptionService:
         if not address or len(address) < 10:
             return address or "?"
         return f"{address[:6]}…{address[-4:]}"
+
+    def _dexscreener_url(self, token_address: str) -> str | None:
+        if not token_address:
+            return None
+        address = token_address.strip().lower()
+        if not address:
+            return None
+        network = (self.network or "base").lower()
+        if network in {"base", "base-mainnet"}:
+            slug = "base"
+        elif network in {"base-sepolia", "sepolia"}:
+            slug = "base-sepolia"
+        else:
+            slug = "base"
+        return f"https://dexscreener.com/{slug}/{address}"
 
     def _transfer_event_to_log(self, event: Dict[str, Any]) -> Dict[str, Any] | None:
         if not isinstance(event, dict):

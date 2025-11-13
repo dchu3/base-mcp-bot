@@ -149,16 +149,7 @@ class GeminiPlanner:
             [{"role": "user", "parts": [{"text": prompt}]}],
         )
 
-        text = ""
-        if response.candidates:
-            parts = response.candidates[0].content.parts  # type: ignore[attr-defined]
-            text_fragments = []
-            for part in parts:
-                value = getattr(part, "text", None)
-                if value:
-                    text_fragments.append(value)
-            text = "".join(text_fragments)
-
+        text = self._extract_response_text(response)
         logger.info("planner_raw_response", output=text)
         if not text:
             return []
@@ -973,18 +964,20 @@ class GeminiPlanner:
         addresses: Sequence[str],
         label: str,
         network: str,
+        token_insights: Mapping[str, Dict[str, str]] | None = None,
     ) -> TokenSummary | None:
         """Fetch Dexscreener data for explicit token addresses."""
         filtered = [addr for addr in addresses if isinstance(addr, str) and addr]
         if not filtered:
             return None
-        return await self._build_token_summary(filtered, label, network)
+        return await self._build_token_summary(filtered, label, network, token_insights)
 
     async def _build_token_summary(
         self,
         addresses: Sequence[str],
         label: str,
         network: str,
+        token_insights: Mapping[str, Dict[str, str]] | None = None,
     ) -> TokenSummary | None:
         chain_id = self._derive_chain_id(network)
         chain_numeric = self._derive_chain_numeric(network)
@@ -1032,7 +1025,21 @@ class GeminiPlanner:
                 continue
             if dedupe_key:
                 seen_pairs.add(dedupe_key)
-            summaries.append(format_token_summary(entry))
+            enriched_entry = dict(entry)
+            if token_insights:
+                normalized_address = enriched_entry.get(
+                    "address"
+                ) or enriched_entry.get("tokenAddress")
+                if isinstance(normalized_address, str):
+                    insight = token_insights.get(normalized_address.lower())
+                    if insight:
+                        summary_text = insight.get("activitySummary")
+                        details_text = insight.get("activityDetails")
+                        if summary_text:
+                            enriched_entry["activitySummary"] = summary_text
+                        if details_text:
+                            enriched_entry["activityDetails"] = details_text
+            summaries.append(format_token_summary(enriched_entry))
             context_tokens.append(
                 self._build_token_context_entry(entry, label or source_address)
             )
@@ -1050,6 +1057,38 @@ class GeminiPlanner:
         if add_nfa:
             message = append_not_financial_advice(message)
         return TokenSummary(message=message, tokens=context_tokens)
+
+    async def summarize_transfer_activity(
+        self, token_label: str, events: Sequence[Mapping[str, Any]]
+    ) -> str | None:
+        if not events:
+            return None
+        trimmed = list(events[: self.MAX_ROUTER_ITEMS])
+        prompt = textwrap.dedent(
+            f"""
+            You are assisting a Base blockchain Telegram bot.
+            Summarize the notable wallet flows for {token_label} using at most two concise sentences.
+            Highlight any net inflows/outflows or repeating counterparties using plain English.
+            Avoid Markdown formatting and do not invent data.
+
+            Transfers:
+            {json.dumps(trimmed)}
+            """
+        ).strip()
+        try:
+            response = await asyncio.to_thread(
+                self.model.generate_content,
+                [{"role": "user", "parts": [{"text": prompt}]}],
+            )
+        except Exception as exc:  # pragma: no cover - network/process errors
+            logger.warning(
+                "transfer_summary_failed",
+                token=token_label,
+                error=str(exc),
+            )
+            return None
+        text = self._extract_response_text(response).strip()
+        return text or None
 
     def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
         router_key = call.params.get("routerKey")
@@ -1199,6 +1238,25 @@ class GeminiPlanner:
         if source:
             entry["source"] = str(source)
         return entry
+
+    @staticmethod
+    def _extract_response_text(response: Any) -> str:
+        if not response:
+            return ""
+        candidates = getattr(response, "candidates", None)
+        if not candidates:
+            return ""
+        candidate = candidates[0]
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None)
+        if not parts:
+            return ""
+        text_fragments: List[str] = []
+        for part in parts:
+            value = getattr(part, "text", None)
+            if value:
+                text_fragments.append(value)
+        return "".join(text_fragments)
 
     @staticmethod
     def _format_timestamp(value: Any) -> str:
