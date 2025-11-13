@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from telegram.error import BadRequest
 
@@ -329,20 +331,40 @@ async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
     await db.init_models()
 
     token_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    recent_ts = int((datetime.now(timezone.utc) - timedelta(minutes=10)).timestamp())
+    old_ts = int((datetime.now(timezone.utc) - timedelta(minutes=120)).timestamp())
     transfer_payload = {
         "items": [
             {
-                "hash": "0xwatch",
-                "timestamp": "2024-01-04T00:00:00Z",
-                "value": "12345",
-                "symbol": "AAA",
-                "method": "Transfer",
-            }
+                "hash": "0xwatch-new",
+                "timestamp": recent_ts,
+                "from": "0x1111111111111111111111111111111111111111",
+                "to": "0x2222222222222222222222222222222222222222",
+                "amount": "123450000000000000000",
+            },
+            {
+                "hash": "0xwatch-old",
+                "timestamp": old_ts,
+                "from": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "to": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "amount": "999",
+            },
         ]
     }
     base_client = DummyBaseClient(
         payload={},
-        responses={"getTokenTransfers": transfer_payload},
+        responses={
+            "getTokenTransfers": transfer_payload,
+            "resolveToken": {
+                "address": token_address,
+                "name": "AAA Token",
+                "symbol": "AAA",
+                "decimals": 18,
+                "totalSupply": None,
+                "holders": None,
+                "type": "ERC20",
+            },
+        },
     )
     bot = DummyBot()
     planner = DummyPlanner(None)
@@ -372,9 +394,184 @@ async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
     assert len(bot.calls) == 1
     message = bot.calls[0]
     assert "Dex block" in message["text"]
-    assert "All tokens can rug pull" in message["text"].replace("\\", "")
+    plain_text = message["text"].replace("\\", "")
+    assert "All tokens can rug pull" in plain_text
+    assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in plain_text
+    assert "0xwatch-old" not in plain_text
+    assert "0xwatch-" in plain_text
+    assert "Alpha token" in plain_text
+    assert "123.45 AAA" in plain_text
     assert message["parse_mode"] == "MarkdownV2"
-    assert base_client.calls and base_client.calls[0][0] == "getTokenTransfers"
+    called_methods = {call[0] for call in base_client.calls}
+    assert "getTokenTransfers" in called_methods
+    assert "resolveToken" in called_methods
     assert planner.watch_calls
     assert planner.watch_calls[0][1] == "watchlist (1 token)"
     assert tokens[0].token_symbol == "AAA"
+
+
+@pytest.mark.asyncio
+async def test_watchlist_cycle_handles_no_recent_transfers(tmp_path) -> None:
+    db_path = tmp_path / "watch-none.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    token_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    base_client = DummyBaseClient(
+        payload={},
+        responses={
+            "getTokenTransfers": {"items": []},
+            "resolveToken": {
+                "address": token_address,
+                "name": "BBB Token",
+                "symbol": "BBB",
+                "decimals": 18,
+                "totalSupply": None,
+                "holders": None,
+                "type": "ERC20",
+            },
+        },
+    )
+    bot = DummyBot()
+    planner = DummyPlanner(
+        TokenSummary(
+            message=append_not_financial_advice("Dex block"),
+            tokens=[{"address": token_address, "symbol": "BBB"}],
+        )
+    )
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=db,
+        mcp_manager=DummyMCPManager(base_client),
+        planner=planner,
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=bot,
+        interval_minutes=5,
+    )
+
+    async with db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(303)
+        await repo.add_watch_token(user.id, token_address, label="Beta token")
+        await service._process_watchlists(repo)
+
+    assert len(bot.calls) == 1
+    message = bot.calls[0]["text"].replace("\\", "")
+    assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in message
+    assert "No transfers in the last" in message
+
+
+@pytest.mark.asyncio
+async def test_watchlist_cycle_handles_legacy_timestamp_field(tmp_path) -> None:
+    db_path = tmp_path / "watch-legacy.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    token_address = "0xcccccccccccccccccccccccccccccccccccccccc"
+    recent_ts = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp())
+    base_client = DummyBaseClient(
+        payload={},
+        responses={
+            "getTokenTransfers": {
+                "items": [
+                    {
+                        "hash": "0xlegacy",
+                        "timeStamp": str(recent_ts),
+                        "from": "0x3333333333333333333333333333333333333333",
+                        "to": "0x4444444444444444444444444444444444444444",
+                        "amount": "500000000000000000",
+                    }
+                ]
+            },
+            "resolveToken": {
+                "address": token_address,
+                "name": "CCC Token",
+                "symbol": "CCC",
+                "decimals": 18,
+            },
+        },
+    )
+    bot = DummyBot()
+    planner = DummyPlanner(
+        TokenSummary(
+            message=append_not_financial_advice("Dex block"),
+            tokens=[{"address": token_address, "symbol": "CCC"}],
+        )
+    )
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=db,
+        mcp_manager=DummyMCPManager(base_client),
+        planner=planner,
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=bot,
+        interval_minutes=5,
+    )
+
+    async with db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(404)
+        await repo.add_watch_token(user.id, token_address, label="Gamma token")
+        await service._process_watchlists(repo)
+
+    assert len(bot.calls) == 1
+    plain_text = bot.calls[0]["text"].replace("\\", "")
+    assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in plain_text
+    assert "0xlegacy" in plain_text
+
+
+@pytest.mark.asyncio
+async def test_fetch_transfer_logs_retries_and_caches(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "watch-cache.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    class RaisingBase:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def call_tool(self, method: str, params: dict) -> dict:
+            self.calls += 1
+            raise RuntimeError("Service unavailable (524)")
+
+    async def fake_sleep(_: float) -> None:  # pragma: no cover - patched in test
+        return None
+
+    monkeypatch.setattr("app.jobs.subscriptions.asyncio.sleep", fake_sleep)
+
+    base_client = RaisingBase()
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=db,
+        mcp_manager=DummyMCPManager(base_client),
+        planner=DummyPlanner(None),
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=DummyBot(),
+        interval_minutes=5,
+    )
+
+    logs, metadata, error = await service._fetch_transfer_logs(
+        "0x1111111111111111111111111111111111111111",
+        SubscriptionService.MAX_WATCH_TRANSFER_FETCH,
+    )
+
+    assert logs == []
+    assert metadata is None
+    assert error == "Base explorer timed out fetching transfers."
+    assert base_client.calls == service.TRANSFER_FETCH_RETRIES
+
+    logs, metadata, error = await service._fetch_transfer_logs(
+        "0x1111111111111111111111111111111111111111",
+        SubscriptionService.MAX_WATCH_TRANSFER_FETCH,
+    )
+
+    assert logs == []
+    assert metadata is None
+    assert error == "Base explorer recovering from a recent timeout."
+    assert base_client.calls == service.TRANSFER_FETCH_RETRIES

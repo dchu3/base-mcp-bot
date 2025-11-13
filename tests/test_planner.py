@@ -173,6 +173,42 @@ def test_render_response_prefers_token_summaries() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evaluate_honeypot_discovers_after_pair_failure() -> None:
+    planner = _make_planner()
+    planner._honeypot_missing_cache = {}
+    planner._honeypot_discovery_cache = {}
+
+    class FakeHoneypotClient:
+        def __init__(self) -> None:
+            self.check_calls = 0
+
+        async def call_tool(self, method: str, params: dict) -> dict:
+            if method == "check_token":
+                self.check_calls += 1
+                if self.check_calls == 1:
+                    raise RuntimeError("Request failed with status code 404")
+                return {
+                    "summary": {"verdict": "SAFE_TO_TRADE", "reason": "ok"},
+                    "raw": {"contractCode": {"openSource": True}},
+                }
+            if method == "discover_pairs":
+                return {
+                    "pairs": [
+                        {"pair": "0xdiscovered", "liquidityUsd": "12345"},
+                    ]
+                }
+            return {}
+
+    client = FakeHoneypotClient()
+    verdict = await planner._evaluate_honeypot_target(
+        client, "0x1234567890abcdef1234567890abcdef12345678", 8453, "0xbroken"
+    )
+
+    assert verdict and verdict["verdict"] == "SAFE_TO_TRADE"
+    assert client.check_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_summarize_transactions_returns_token_summary() -> None:
     planner = _make_planner()
 
