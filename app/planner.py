@@ -647,7 +647,7 @@ class GeminiPlanner:
                 initial_pair = cached_pair
 
         pair = initial_pair
-        attempted_discovery = bool(pair)
+        attempted_discovery = False
 
         for _ in range(2):
             try:
@@ -655,8 +655,11 @@ class GeminiPlanner:
             except Exception as exc:  # pragma: no cover - network/process errors
                 if not attempted_discovery:
                     attempted_discovery = True
-                    pair = await self._discover_pair_for_token(client, token, chain_id)
-                    if pair:
+                    new_pair = await self._discover_pair_for_token(
+                        client, token, chain_id
+                    )
+                    if new_pair:
+                        pair = new_pair
                         continue
                 fallback = self._fallback_verdict_from_error(exc)
                 log_fn = logger.info if fallback else logger.warning

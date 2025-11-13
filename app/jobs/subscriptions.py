@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Sequence
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,6 +32,15 @@ class SubscriptionService:
 
     MAX_WATCH_TOKENS = 5
     MAX_WATCH_TXNS = 4
+    MAX_WATCH_TRANSFER_FETCH = 40
+    WATCH_ACTIVITY_LOOKBACK_MINUTES = 60
+    TRANSFER_TOPIC = (
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+    )
+    TRANSFER_FETCH_TIMEOUT_SECONDS = 10
+    TRANSFER_FETCH_RETRIES = 3
+    TRANSFER_FAILURE_TTL_SECONDS = 120
+    WATCHLIST_TRANSFERS_DISABLED = "Watchlist transfer feed is temporarily disabled."
 
     def __init__(
         self,
@@ -52,6 +64,8 @@ class SubscriptionService:
         self.interval_minutes = interval_minutes
         self.override_chat_id = override_chat_id
         self._job = None
+        self._token_metadata_cache: Dict[str, Dict[str, Any] | None] = {}
+        self._transfer_error_cache: Dict[str, float] = {}
 
     def start(self) -> None:
         if self.scheduler.running:
@@ -199,13 +213,16 @@ class SubscriptionService:
             return
 
         unique_addresses: Dict[str, str] = {}
+        deduped_tokens: List[TokenWatch] = []
         for token in tokens:
             address = (token.token_address or "").strip()
             if not address:
                 continue
             normalized = address.lower()
-            if normalized not in unique_addresses:
-                unique_addresses[normalized] = address
+            if normalized in unique_addresses:
+                continue
+            unique_addresses[normalized] = address
+            deduped_tokens.append(token)
             if len(unique_addresses) >= self.MAX_WATCH_TOKENS:
                 break
 
@@ -241,9 +258,7 @@ class SubscriptionService:
                     error=str(exc),
                 )
 
-        activity_sections = await self._build_watchlist_activity(
-            tokens[: self.MAX_WATCH_TOKENS]
-        )
+        activity_sections = await self._build_watchlist_activity(deduped_tokens)
 
         sections: List[str] = []
         if summary and summary.message:
@@ -273,57 +288,191 @@ class SubscriptionService:
     async def _build_watchlist_activity(
         self, tokens: Sequence[TokenWatch]
     ) -> List[str]:
+        if not tokens:
+            return []
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            minutes=self.WATCH_ACTIVITY_LOOKBACK_MINUTES
+        )
         sections: List[str] = []
-        for token in tokens[: self.MAX_WATCH_TOKENS]:
-            transfers = await self._fetch_token_transfers(token.token_address)
-            if not transfers:
-                continue
-            label = token.token_symbol or token.label or token.token_address
-            header = (
-                f"*{escape_markdown(label)}* — `{escape_markdown(token.token_address)}`"
-            )
-            lines = [
-                format_transaction(entry) for entry in transfers[: self.MAX_WATCH_TXNS]
-            ]
-            sections.append(join_messages([header, "\n".join(lines)]))
+        for token in tokens:
+            section = await self._render_watch_token_activity(token, cutoff)
+            if section:
+                sections.append(section)
+        if not sections:
+            logger.info("watchlist_transfers_disabled_notice")
+            return [escape_markdown(self.WATCHLIST_TRANSFERS_DISABLED)]
         return sections
 
-    async def _fetch_token_transfers(self, token_address: str) -> List[Dict[str, str]]:
-        if not token_address:
-            return []
-        params = {"address": token_address, "pageSize": self.MAX_WATCH_TXNS}
-        try:
-            payload = await self.mcp.base.call_tool("getTokenTransfers", params)
-        except Exception as exc:  # pragma: no cover - network/process errors
-            logger.warning(
-                "watchlist_token_fetch_failed", token=token_address, error=str(exc)
-            )
-            return []
-        transfers = self._iter_transactions(payload)
-        normalized = [self._normalize_watch_transfer(tx) for tx in transfers]
-        return [entry for entry in normalized if entry.get("hash")]
-
-    def _normalize_watch_transfer(self, tx: Dict[str, Any]) -> Dict[str, str]:
-        if not isinstance(tx, dict):
-            return {}
-        hash_value = tx.get("hash") or tx.get("txHash") or ""
-        timestamp = GeminiPlanner._format_timestamp(
-            tx.get("timestamp") or tx.get("time") or tx.get("blockTime")
+    async def _render_watch_token_activity(
+        self, token: TokenWatch, cutoff: datetime
+    ) -> str | None:
+        address = (token.token_address or "").strip()
+        if not address:
+            return None
+        logs, metadata, error = await self._fetch_transfer_logs(
+            address, self.MAX_WATCH_TRANSFER_FETCH
         )
-        method = tx.get("method") or tx.get("function") or "transfer"
-        amount = tx.get("value") or tx.get("amount") or tx.get("quantity") or ""
-        symbol = tx.get("symbol") or tx.get("tokenSymbol")
-        if symbol and amount:
-            amount = f"{amount} {symbol}"
-        explorer = tx.get("url") or tx.get("explorerUrl")
-        if hash_value and not explorer:
-            explorer = f"https://basescan.org/tx/{hash_value}"
+        if not metadata:
+            metadata = await self._get_token_metadata(address)
+
+        recent_logs = (
+            self._filter_recent_logs(logs, cutoff) if logs else []
+        )[: self.MAX_WATCH_TXNS]
+        entries: List[str] = []
+        for entry in recent_logs:
+            normalized = self._normalize_watch_transfer(entry, metadata)
+            if normalized:
+                entries.append(format_transaction(normalized))
+
+        display_label = (
+            (token.label or "").strip()
+            or (token.token_symbol or "").strip()
+            or self._short_address(address)
+        )
+        lookback = self.WATCH_ACTIVITY_LOOKBACK_MINUTES
+        header = (
+            f"*{escape_markdown(display_label)}* transfers "
+            f"\\(last {lookback}m\\)"
+        )
+        if entries:
+            body = "\n".join(entries)
+            return "\n".join([header, body])
+
+        fallback = error or f"No transfers in the last {lookback} minutes."
+        return "\n".join([header, escape_markdown(fallback)])
+
+    async def _fetch_transfer_logs(
+        self, token_address: str, page_size: int
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any] | None, str | None]:
+        if not token_address:
+            return [], None, "invalid token address"
+        normalized_addr = token_address.lower()
+        now = time.time()
+        cached_failure = self._transfer_error_cache.get(normalized_addr)
+        if cached_failure and cached_failure > now:
+            return [], None, "Base explorer recovering from a recent timeout."
+
+        params = {
+            "address": token_address,
+            "pageSize": page_size,
+        }
+
+        last_error: str | None = None
+        delay = 0.5
+        for attempt in range(1, self.TRANSFER_FETCH_RETRIES + 1):
+            start = time.perf_counter()
+            logger.debug(
+                "watchlist_fetch_begin",
+                token=token_address,
+                attempt=attempt,
+                params=params,
+            )
+            try:
+                payload = await asyncio.wait_for(
+                    self.mcp.base.call_tool("getTokenTransfers", params),
+                    timeout=self.TRANSFER_FETCH_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:  # pragma: no cover - network/process errors
+                friendly = self._classify_transfer_error(exc)
+                last_error = friendly
+                duration = (time.perf_counter() - start) * 1000
+                logger.warning(
+                    "watchlist_token_fetch_failed",
+                    token=token_address,
+                    attempt=attempt,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    duration_ms=round(duration, 2),
+                )
+                if attempt < self.TRANSFER_FETCH_RETRIES:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                continue
+
+            metadata: Dict[str, Any] | None = None
+            items = payload.get("items") if isinstance(payload, dict) else None
+            if not isinstance(items, list):
+                return [], None, "no transfer data returned"
+            duration = (time.perf_counter() - start) * 1000
+            logger.debug(
+                "watchlist_fetch_success",
+                token=token_address,
+                attempt=attempt,
+                duration_ms=round(duration, 2),
+                item_count=len(items),
+            )
+            normalized: List[Dict[str, Any]] = []
+            for event in items:
+                if not metadata:
+                    event_meta = event.get("token")
+                    if isinstance(event_meta, dict):
+                        metadata = event_meta
+                converted = self._transfer_event_to_log(event)
+                if converted:
+                    normalized.append(converted)
+            if normalized_addr in self._transfer_error_cache:
+                self._transfer_error_cache.pop(normalized_addr, None)
+            return normalized, metadata, None
+
+        if last_error:
+            self._transfer_error_cache[normalized_addr] = (
+                now + self.TRANSFER_FAILURE_TTL_SECONDS
+            )
+            return [], None, last_error
+        return [], None, "transfer fetch failed"
+
+    def _filter_recent_logs(
+        self, logs: Sequence[Dict[str, Any]], cutoff: datetime
+    ) -> List[Dict[str, Any]]:
+        recent: List[Dict[str, Any]] = []
+        for entry in logs:
+            parsed = self._parse_log_timestamp(self._log_timestamp_value(entry))
+            if parsed and parsed >= cutoff:
+                recent.append(entry)
+        return recent
+
+    async def _get_token_metadata(self, token_address: str) -> Dict[str, Any] | None:
+        normalized = token_address.lower()
+        if normalized in self._token_metadata_cache:
+            return self._token_metadata_cache[normalized]
+        try:
+            metadata = await self.mcp.base.call_tool(
+                "resolveToken", {"address": token_address}
+            )
+        except Exception as exc:  # pragma: no cover - metadata lookups best-effort
+            logger.warning(
+                "token_metadata_resolve_failed", token=token_address, error=str(exc)
+            )
+            self._token_metadata_cache[normalized] = None
+            return None
+        self._token_metadata_cache[normalized] = metadata
+        return metadata
+
+    def _normalize_watch_transfer(
+        self, log: Dict[str, Any], metadata: Dict[str, Any] | None
+    ) -> Dict[str, str] | None:
+        topics = log.get("topics")
+        if not isinstance(topics, list) or len(topics) < 3:
+            return None
+        from_addr = self._topic_address(topics[1])
+        to_addr = self._topic_address(topics[2])
+        timestamp = GeminiPlanner._format_timestamp(self._log_timestamp_value(log))
+        hash_value = (
+            log.get("transactionHash") or log.get("hash") or log.get("txHash") or ""
+        )
+        amount = self._format_transfer_amount(log.get("data"), metadata)
+        amount_display = (
+            f"{amount} ({self._short_address(from_addr)}→{self._short_address(to_addr)})"
+            if amount
+            else f"{self._short_address(from_addr)}→{self._short_address(to_addr)}"
+        )
+        explorer = f"https://basescan.org/tx/{hash_value}" if hash_value else ""
         return {
-            "method": str(method or "transfer"),
-            "amount": str(amount or ""),
+            "method": "Transfer",
+            "amount": amount_display,
             "timestamp": timestamp,
             "hash": str(hash_value),
-            "explorer_url": str(explorer or ""),
+            "explorer_url": explorer,
         }
 
     def _strip_nfa(self, message: str) -> str:
@@ -333,6 +482,132 @@ class SubscriptionService:
         if message.endswith(footer):
             return message[: -len(footer)].rstrip()
         return message
+
+    @staticmethod
+    def _parse_log_timestamp(value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                return datetime.fromtimestamp(float(stripped), tz=timezone.utc)
+            if stripped.startswith("0x") or stripped.startswith("0X"):
+                try:
+                    return datetime.fromtimestamp(int(stripped, 16), tz=timezone.utc)
+                except ValueError:
+                    return None
+            try:
+                normalized = (
+                    stripped.replace("Z", "+00:00") if "Z" in stripped else stripped
+                )
+                return datetime.fromisoformat(normalized)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _log_timestamp_value(entry: Dict[str, Any] | None) -> Any:
+        if not isinstance(entry, dict):
+            return None
+        for key in ("timestamp", "timeStamp", "block_timestamp"):
+            value = entry.get(key)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _classify_transfer_error(error: Exception | str) -> str:
+        if isinstance(error, TimeoutError) or isinstance(error, asyncio.TimeoutError):
+            return "Base explorer timed out fetching transfers."
+        message = str(error) if not isinstance(error, str) else error
+        lowered = message.lower()
+        if "524" in lowered or "timeout" in lowered:
+            return "Base explorer timed out fetching transfers."
+        if "service unavailable" in lowered or "cloudflare" in lowered:
+            return "Base explorer is temporarily unavailable."
+        if "connection" in lowered or "network" in lowered:
+            return "Network error while fetching transfers."
+        return "Unable to fetch transfers right now."
+
+    def _format_transfer_amount(
+        self, data: Any, metadata: Dict[str, Any] | None
+    ) -> str | None:
+        if not isinstance(data, str):
+            return None
+        try:
+            value = int(data, 16)
+        except ValueError:
+            return None
+        if value == 0:
+            return None
+        decimals = metadata.get("decimals") if isinstance(metadata, dict) else None
+        symbol = metadata.get("symbol") if isinstance(metadata, dict) else None
+        decimals = (
+            decimals if isinstance(decimals, (int, float)) and decimals >= 0 else 18
+        )
+        amount = value / (10 ** int(decimals))
+        if amount >= 1:
+            formatted = f"{amount:,.2f}"
+        else:
+            formatted = f"{amount:.6f}".rstrip("0").rstrip(".")
+        if symbol:
+            return f"{formatted} {symbol}"
+        return formatted
+
+    @staticmethod
+    def _topic_address(topic: Any) -> str:
+        if not isinstance(topic, str) or len(topic) < 42:
+            return "0x0000000000000000000000000000000000000000"
+        return "0x" + topic[-40:].lower()
+
+    @staticmethod
+    def _short_address(address: str | None) -> str:
+        if not address or len(address) < 10:
+            return address or "?"
+        return f"{address[:6]}…{address[-4:]}"
+
+    def _transfer_event_to_log(self, event: Dict[str, Any]) -> Dict[str, Any] | None:
+        if not isinstance(event, dict):
+            return None
+        tx_hash = event.get("hash") or event.get("transactionHash")
+        amount_raw = event.get("amount") or event.get("value")
+        from_addr = event.get("from")
+        to_addr = event.get("to")
+        if not tx_hash or not from_addr or not to_addr:
+            return None
+        timestamp = event.get("timestamp") or event.get("timeStamp")
+        data_hex: str | None = None
+        if isinstance(amount_raw, str):
+            amount_str = amount_raw.strip()
+            if amount_str:
+                base = 16 if amount_str.startswith("0x") else 10
+                try:
+                    data_hex = hex(int(amount_str, base))
+                except ValueError:
+                    data_hex = None
+        topics = [
+            self.TRANSFER_TOPIC,
+            self._address_to_topic(from_addr),
+            self._address_to_topic(to_addr),
+        ]
+        return {
+            "transactionHash": tx_hash,
+            "timestamp": timestamp,
+            "topics": topics,
+            "data": data_hex,
+        }
+
+    @staticmethod
+    def _address_to_topic(address: Any) -> str:
+        if not isinstance(address, str) or not address.startswith("0x"):
+            return "0x" + ("0" * 64)
+        stripped = address[2:]
+        if len(stripped) > 40:
+            stripped = stripped[-40:]
+        padded = stripped.rjust(64, "0")
+        return "0x" + padded.lower()
 
     def _resolve_router(self, router_key: str) -> RouterInfo:
         return resolve_router(router_key, self.network, self.routers)
