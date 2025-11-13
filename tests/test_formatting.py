@@ -81,3 +81,25 @@ def test_format_token_summary_includes_honeypot_verdict():
     output = format_token_summary(entry)
     assert "CAUTION" in output
     assert "High sell tax" in output
+
+
+def test_format_token_summary_appends_transfer_details_before_link():
+    entry = {
+        "symbol": "FLOW",
+        "price": "$1.23",
+        "volume24h": "4567",
+        "liquidity": "890",
+        "change24h": "-2.1%",
+        "url": "https://dexscreener.com/base/flow",
+        "activitySummary": "Strong inflows from two whales.",
+        "activityDetails": "• 2025-11-01 — Transfer (10 FLOW)\n• 2025-11-01 — Transfer (5 FLOW)",
+    }
+    output = format_token_summary(entry)
+    expected_summary = (
+        f"Transfers: {escape_markdown('Strong inflows from two whales.')}"
+    )
+    assert expected_summary in output
+    assert entry["activityDetails"] in output
+    assert output.index(entry["activityDetails"]) < output.index(
+        "[View on Dexscreener]"
+    )

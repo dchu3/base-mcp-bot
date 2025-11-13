@@ -41,7 +41,7 @@ The tags appear in brackets before the token pair, followed by a second line of 
 - `/watch <token_address> [symbol] [label]` saves a token for follow-up reports (symbol/label are optional and can be updated later).
 - `/watchlist` prints every saved token along with its address.
 - `/unwatch <token_address>` removes a single entry; `/unwatch_all` clears the watchlist.
-- Watchlisted tokens feed the scheduler so the bot can pull Base transactions, Dexscreener stats, and Honeypot verdicts for each saved contract.
+- Watchlisted tokens feed the scheduler so the bot can pull Base transactions, Dexscreener stats, and Honeypot verdicts for each saved contract. Each watchlist card now focuses on the Gemini-generated summary (no per-transfer bullets) and ends with a Dexscreener link so users can jump straight into the pair.
 
 ### Prompt template
 

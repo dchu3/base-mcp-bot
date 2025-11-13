@@ -22,3 +22,5 @@ Write imperative, ≤72-character commit subjects with optional wrapped bodies (
 
 ## MCP & Configuration Tips
 Never commit populated `.env` files or SQLite artefacts; `.gitignore` already excludes `.env`, `.tmp/`, and `state.db`. Ensure `PLANNER_PROMPT_FILE`, MCP command paths, and optional `TELEGRAM_CHAT_ID` are kept in `.env`. When sharing command examples, prefer relative paths or placeholders so secrets and machine-specific directories stay out of version control.
+
+Watchlist UX guidance: the Telegram card should highlight the Gemini planner paragraph and Honeypot verdict instead of listing individual transfers. Always include a Dexscreener link at the bottom of the card, even when Gemini already links out, to keep navigation consistent.

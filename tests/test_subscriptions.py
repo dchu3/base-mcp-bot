@@ -69,14 +69,24 @@ class DummyPlanner:
         self.calls = []
         self.watch_summary = summary
         self.watch_calls = []
+        self.transfer_summary = "Transfer recap"
+        self.transfer_calls = []
+        self.last_token_insights = None
 
     async def summarize_transactions(self, router_key, transactions, network):
         self.calls.append((router_key, transactions, network))
         return self.summary
 
-    async def summarize_tokens_from_context(self, addresses, label, network):
+    async def summarize_tokens_from_context(
+        self, addresses, label, network, token_insights=None
+    ):
         self.watch_calls.append((addresses, label, network))
+        self.last_token_insights = token_insights
         return self.watch_summary
+
+    async def summarize_transfer_activity(self, token_label, events):
+        self.transfer_calls.append((token_label, events))
+        return self.transfer_summary
 
 
 @pytest.mark.asyncio
@@ -292,6 +302,7 @@ async def test_process_subscription_handles_missing_summary(tmp_path) -> None:
 
     base_client = DummyBaseClient(payload)
     planner = DummyPlanner(None)
+    planner.transfer_summary = "Large inflows hitting Alpha token."
     bot = DummyBot()
     service = SubscriptionService(
         scheduler=DummyScheduler(),
@@ -397,16 +408,19 @@ async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
     plain_text = message["text"].replace("\\", "")
     assert "All tokens can rug pull" in plain_text
     assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in plain_text
-    assert "0xwatch-old" not in plain_text
-    assert "0xwatch-" in plain_text
-    assert "Alpha token" in plain_text
-    assert "123.45 AAA" in plain_text
     assert message["parse_mode"] == "MarkdownV2"
     called_methods = {call[0] for call in base_client.calls}
     assert "getTokenTransfers" in called_methods
     assert "resolveToken" in called_methods
     assert planner.watch_calls
     assert planner.watch_calls[0][1] == "watchlist (1 token)"
+    assert planner.transfer_calls
+    assert planner.transfer_calls[0][0] == "Alpha token"
+    assert planner.last_token_insights
+    insight = planner.last_token_insights[token_address.lower()]
+    assert insight["activitySummary"] == planner.transfer_summary
+    assert insight["activityDetails"] == ""
+    assert "View on Dexscreener" in message["text"].replace("\\", "")
     assert tokens[0].token_symbol == "AAA"
 
 
@@ -460,7 +474,13 @@ async def test_watchlist_cycle_handles_no_recent_transfers(tmp_path) -> None:
     assert len(bot.calls) == 1
     message = bot.calls[0]["text"].replace("\\", "")
     assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in message
-    assert "No transfers in the last" in message
+    assert "Dex block" in message
+    assert not planner.transfer_calls
+    assert planner.last_token_insights
+    insight = planner.last_token_insights[token_address.lower()]
+    assert "No transfers in the last" in insight["activitySummary"]
+    assert not insight["activityDetails"]
+    assert "View on Dexscreener" in message
 
 
 @pytest.mark.asyncio
@@ -521,7 +541,12 @@ async def test_watchlist_cycle_handles_legacy_timestamp_field(tmp_path) -> None:
     assert len(bot.calls) == 1
     plain_text = bot.calls[0]["text"].replace("\\", "")
     assert SubscriptionService.WATCHLIST_TRANSFERS_DISABLED not in plain_text
-    assert "0xlegacy" in plain_text
+    assert planner.last_token_insights
+    legacy_insight = planner.last_token_insights[token_address.lower()]
+    assert legacy_insight["activitySummary"] == planner.transfer_summary
+    assert legacy_insight["activityDetails"] == ""
+    assert "View on Dexscreener" in bot.calls[0]["text"]
+    assert planner.transfer_calls
 
 
 @pytest.mark.asyncio
