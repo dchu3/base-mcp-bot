@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from argparse import ArgumentParser, ArgumentTypeError
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
@@ -25,7 +26,7 @@ from app.utils.prompts import load_prompt_template
 logger = get_logger(__name__)
 
 
-async def main() -> None:
+async def main(interval_override_minutes: int | None = None) -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
 
@@ -84,6 +85,18 @@ async def main() -> None:
     )
     rate_limiter = RateLimiter(settings.rate_limit_per_user_per_min)
     scheduler = AsyncIOScheduler()
+    interval_minutes = (
+        interval_override_minutes
+        if interval_override_minutes is not None
+        else settings.scheduler_interval_minutes
+    )
+    if interval_override_minutes is not None:
+        logger.info(
+            "scheduler_interval_override",
+            configured=settings.scheduler_interval_minutes,
+            override=interval_minutes,
+        )
+
     subscription_service = SubscriptionService(
         scheduler=scheduler,
         db=db,
@@ -92,7 +105,7 @@ async def main() -> None:
         routers=routers,
         network=settings.base_network,
         bot=application.bot,
-        interval_minutes=settings.scheduler_interval_minutes,
+        interval_minutes=interval_minutes,
         override_chat_id=settings.telegram_chat_id,
     )
     handler_context = HandlerContext(
@@ -141,8 +154,31 @@ async def main() -> None:
         await mcp_manager.shutdown()
 
 
-if __name__ == "__main__":
+def _parse_interval(value: str) -> int:
     try:
-        asyncio.run(main())
+        parsed = int(value)
+    except ValueError as exc:
+        raise ArgumentTypeError("must be an integer") from exc
+    if not 1 <= parsed <= 60:
+        raise ArgumentTypeError("must be between 1 and 60 minutes")
+    return parsed
+
+
+def _build_arg_parser() -> ArgumentParser:
+    parser = ArgumentParser(description="Base MCP bot")
+    parser.add_argument(
+        "--scheduler-interval-minutes",
+        type=_parse_interval,
+        dest="scheduler_interval_minutes",
+        help="override the subscription scheduler frequency (1-60 minutes)",
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    parser = _build_arg_parser()
+    args = parser.parse_args()
+    try:
+        asyncio.run(main(args.scheduler_interval_minutes))
     except KeyboardInterrupt:
         logger.info("shutdown_requested_by_keyboard")

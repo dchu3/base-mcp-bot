@@ -1067,9 +1067,10 @@ class GeminiPlanner:
         prompt = textwrap.dedent(
             f"""
             You are assisting a Base blockchain Telegram bot.
-            Summarize the notable wallet flows for {token_label} using at most two concise sentences.
-            Highlight any net inflows/outflows or repeating counterparties using plain English.
-            Avoid Markdown formatting and do not invent data.
+            In a single sentence under 50 characters, describe the overall wallet flow for {token_label}.
+            Use plain English, avoid mentioning wallet addresses, hex strings, or Markdown.
+            Focus on direction (buying/selling, inflow/outflow) and notable counterparties without naming addresses.
+            Respond with just that short sentence and nothing else.
 
             Transfers:
             {json.dumps(trimmed)}
@@ -1088,7 +1089,19 @@ class GeminiPlanner:
             )
             return None
         text = self._extract_response_text(response).strip()
-        return text or None
+        sanitized = self._sanitize_transfer_summary(text)
+        return sanitized or None
+
+    @staticmethod
+    def _sanitize_transfer_summary(text: str) -> str:
+        if not text:
+            return ""
+        single_line = re.split(r"[\r\n]+", text)[0].strip()
+        without_hex = re.sub(r"0x[a-fA-F0-9]{6,}", "wallet", single_line)
+        compressed = re.sub(r"\s{2,}", " ", without_hex).strip()
+        if len(compressed) > 50:
+            compressed = compressed[:50].rstrip()
+        return compressed
 
     def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
         router_key = call.params.get("routerKey")

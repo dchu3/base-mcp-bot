@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     )
 
     scheduler_interval_minutes: int = Field(
-        default=5,
+        default=60,
         alias="SCHEDULER_INTERVAL_MINUTES",
         ge=1,
         le=60,

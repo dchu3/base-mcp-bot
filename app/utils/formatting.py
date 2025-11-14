@@ -100,7 +100,7 @@ def format_token_summary(entry: Mapping[str, str]) -> str:
     if metrics_line:
         lines.append(metrics_line)
     if activity_summary:
-        lines.append(f"Transfers: {escape_markdown(activity_summary)}")
+        lines.append(f"Info: {escape_markdown(activity_summary)}")
     if activity_details:
         lines.append(activity_details)
     if link:
