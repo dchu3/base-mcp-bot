@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import re
+
 import pytest
 from telegram.error import BadRequest
 
@@ -366,6 +368,19 @@ async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
         payload={},
         responses={
             "getTokenTransfers": transfer_payload,
+            "getLogs": {
+                "items": [
+                    {
+                        "address": "0xrouter",
+                        "topics": [
+                            SubscriptionService.TRANSFER_TOPIC,
+                            "0x" + "1" * 64,
+                            "0x" + "2" * 64,
+                        ],
+                        "data": "0x1",
+                    }
+                ]
+            },
             "resolveToken": {
                 "address": token_address,
                 "name": "AAA Token",
@@ -411,17 +426,79 @@ async def test_watchlist_cycle_sends_summary(tmp_path) -> None:
     assert message["parse_mode"] == "MarkdownV2"
     called_methods = {call[0] for call in base_client.calls}
     assert "getTokenTransfers" in called_methods
+    assert "getLogs" in called_methods
     assert "resolveToken" in called_methods
     assert planner.watch_calls
     assert planner.watch_calls[0][1] == "watchlist (1 token)"
     assert planner.transfer_calls
     assert planner.transfer_calls[0][0] == "Alpha token"
+    event_payload = planner.transfer_calls[0][1][0]
+    assert event_payload["logs"]
     assert planner.last_token_insights
     insight = planner.last_token_insights[token_address.lower()]
     assert insight["activitySummary"] == planner.transfer_summary
-    assert insight["activityDetails"] == ""
+    assert not insight["activityDetails"]
     assert "View on Dexscreener" in message["text"].replace("\\", "")
     assert tokens[0].token_symbol == "AAA"
+
+
+@pytest.mark.asyncio
+async def test_watchlist_summary_trimmed_to_single_sentence(tmp_path) -> None:
+    db_path = tmp_path / "watch-trim.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    token_address = "0xdddddddddddddddddddddddddddddddddddddddd"
+    recent_ts = int((datetime.now(timezone.utc) - timedelta(minutes=5)).timestamp())
+    transfer_payload = {
+        "items": [
+            {
+                "hash": "0xtrim",
+                "timestamp": recent_ts,
+                "from": "0x1111111111111111111111111111111111111111",
+                "to": "0x2222222222222222222222222222222222222222",
+                "amount": "123450000000000000000",
+            }
+        ]
+    }
+    base_client = DummyBaseClient(
+        payload={},
+        responses={
+            "getTokenTransfers": transfer_payload,
+            "getLogs": {"items": []},
+            "resolveToken": {
+                "address": token_address,
+                "name": "DDD Token",
+                "symbol": "DDD",
+                "decimals": 18,
+            },
+        },
+    )
+    bot = DummyBot()
+    planner = DummyPlanner(None)
+    planner.transfer_summary = "Line1\nLine2\nLine3\nLine4\nLine5"
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=db,
+        mcp_manager=DummyMCPManager(base_client),
+        planner=planner,
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=bot,
+        interval_minutes=5,
+    )
+
+    async with db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(505)
+        await repo.add_watch_token(user.id, token_address, label="Trim token")
+        await service._process_watchlists(repo)
+
+    summary = planner.last_token_insights[token_address.lower()]["activitySummary"]
+    assert "\n" not in summary
+    assert len(summary) <= 50
+    assert not re.search(r"0x[a-fA-F0-9]{6,}", summary)
 
 
 @pytest.mark.asyncio
@@ -544,7 +621,7 @@ async def test_watchlist_cycle_handles_legacy_timestamp_field(tmp_path) -> None:
     assert planner.last_token_insights
     legacy_insight = planner.last_token_insights[token_address.lower()]
     assert legacy_insight["activitySummary"] == planner.transfer_summary
-    assert legacy_insight["activityDetails"] == ""
+    assert not legacy_insight["activityDetails"]
     assert "View on Dexscreener" in bot.calls[0]["text"]
     assert planner.transfer_calls
 
@@ -600,3 +677,22 @@ async def test_fetch_transfer_logs_retries_and_caches(monkeypatch, tmp_path) -> 
     assert metadata is None
     assert error == "Base explorer recovering from a recent timeout."
     assert base_client.calls == service.TRANSFER_FETCH_RETRIES
+
+
+def test_prune_sections_to_fit_truncates() -> None:
+    service = SubscriptionService(
+        scheduler=DummyScheduler(),
+        db=None,
+        mcp_manager=DummyMCPManager(DummyBaseClient({}, {})),
+        planner=DummyPlanner(None),
+        routers=DEFAULT_ROUTERS,
+        network="base-mainnet",
+        bot=DummyBot(),
+        interval_minutes=5,
+    )
+    service.MAX_WATCH_MESSAGE_CHARS = 80
+    sections = ["section one", "section two", "section three"]
+    body, truncated = service._prune_sections_to_fit(sections)
+    message = append_not_financial_advice(body)
+    assert truncated
+    assert len(message) <= service.MAX_WATCH_MESSAGE_CHARS

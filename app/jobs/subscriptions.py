@@ -31,7 +31,8 @@ class SubscriptionService:
     """Poll subscribed routers on a cadence and push updates to Telegram users."""
 
     MAX_WATCH_TOKENS = 5
-    MAX_WATCH_TXNS = 4
+    MAX_WATCH_TXNS = 2
+    MAX_LOGS_PER_TX = 4
     MAX_WATCH_TRANSFER_FETCH = 40
     WATCH_ACTIVITY_LOOKBACK_MINUTES = 60
     TRANSFER_TOPIC = (
@@ -39,8 +40,23 @@ class SubscriptionService:
     )
     TRANSFER_FETCH_TIMEOUT_SECONDS = 10
     TRANSFER_FETCH_RETRIES = 3
+    LOG_FETCH_TIMEOUT_SECONDS = 8
+    LOG_FETCH_RETRIES = 2
     TRANSFER_FAILURE_TTL_SECONDS = 120
+    MAX_WATCH_MESSAGE_CHARS = 3500
+    MAX_SUMMARY_SECTION_CHARS = 1500
+    MAX_ACTIVITY_SECTION_CHARS = 1800
+    MAX_WATCH_SUMMARY_LINES = 1
+    MAX_WATCH_SUMMARY_CHARS = 50
+    MAX_WATCH_DETAIL_LINES = 6
     WATCHLIST_TRANSFERS_DISABLED = "Watchlist transfer feed is temporarily disabled."
+    KNOWN_EVENT_TOPICS = {
+        TRANSFER_TOPIC: "Transfer",
+        "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67": "Swap",
+    }
+    TRUNCATION_NOTICE = (
+        "Additional watchlist entries trimmed to fit Telegram limits."
+    )
 
     def __init__(
         self,
@@ -288,14 +304,29 @@ class SubscriptionService:
                 summary_payload = "\n".join(
                     part for part in [summary_payload, link_block] if part
                 )
+            summary_payload = self._truncate_section(
+                summary_payload, self.MAX_SUMMARY_SECTION_CHARS
+            )
             sections.append(summary_payload)
         if activity_sections:
-            sections.append(join_messages(activity_sections))
+            activity_payload = self._truncate_section(
+                join_messages(activity_sections), self.MAX_ACTIVITY_SECTION_CHARS
+            )
+            sections.append(activity_payload)
 
         if not sections:
             return
 
-        message = append_not_financial_advice(join_messages(sections))
+        body, was_trimmed = self._prune_sections_to_fit(sections)
+        if not body:
+            return
+        if was_trimmed:
+            notice = escape_markdown(self.TRUNCATION_NOTICE)
+            candidate = join_messages([body, notice])
+            if len(append_not_financial_advice(candidate)) <= self.MAX_WATCH_MESSAGE_CHARS:
+                body = candidate
+
+        message = append_not_financial_advice(body)
 
         try:
             await self.bot.send_message(
@@ -342,20 +373,43 @@ class SubscriptionService:
         recent_logs = (self._filter_recent_logs(logs, cutoff) if logs else [])[
             : self.MAX_WATCH_TXNS
         ]
+        tx_hashes: List[str] = []
+        for entry in recent_logs:
+            extracted = self._extract_tx_hash(entry)
+            if extracted:
+                tx_hashes.append(extracted)
+        tx_log_map = {}
+        if tx_hashes:
+            tx_log_map = await self._fetch_transaction_logs(tx_hashes)
         structured_events: List[Dict[str, Any]] = []
+        by_hash: Dict[str, Dict[str, Any]] = {}
         for entry in recent_logs:
             normalized = self._normalize_watch_transfer(entry, metadata)
-            if normalized:
-                structured_events.append(
-                    {
-                        "timestamp": normalized.get("timestamp"),
-                        "amount": normalized.get("raw_amount")
-                        or normalized.get("amount"),
-                        "from": normalized.get("fromAddress"),
-                        "to": normalized.get("toAddress"),
-                        "hash": normalized.get("hash"),
-                    }
-                )
+            if not normalized:
+                continue
+            tx_hash = normalized.get("hash") or ""
+            explorer = normalized.get("explorer_url")
+            event_logs = self._summarize_transaction_logs(tx_log_map.get(tx_hash) or [])
+            payload = {
+                "timestamp": normalized.get("timestamp"),
+                "amount": normalized.get("raw_amount") or normalized.get("amount"),
+                "from": normalized.get("fromAddress"),
+                "to": normalized.get("toAddress"),
+                "hash": normalized.get("hash"),
+                "amountDisplay": normalized.get("amount"),
+                "explorer": explorer,
+                "logs": event_logs,
+            }
+            if tx_hash and tx_hash in by_hash:
+                existing = by_hash[tx_hash]
+                existing["coalesced"] = True
+                if existing.get("amountDisplay") and payload.get("amountDisplay"):
+                    existing["amountDisplay"] = payload["amountDisplay"]
+                existing["to"] = payload.get("to")
+            else:
+                if tx_hash:
+                    by_hash[tx_hash] = payload
+                structured_events.append(payload)
         display_label = (
             (token.label or "").strip()
             or (token.token_symbol or "").strip()
@@ -377,6 +431,7 @@ class SubscriptionService:
         if not summary_text:
             summary_text = error or f"No transfers in the last {lookback} minutes."
 
+        summary_text = self._trim_summary_text(summary_text)
         detail_block = ""
         link = self._dexscreener_url(address)
         return {
@@ -424,14 +479,15 @@ class SubscriptionService:
             return None
         lookback = self.WATCH_ACTIVITY_LOOKBACK_MINUTES
         header = (
-            f"*{escape_markdown(label or 'Token')}* transfers "
+            f"*{escape_markdown(label or 'Token')}* info "
             f"\\(last {lookback}m\\)"
         )
         lines = [header]
         if summary:
             lines.append(escape_markdown(summary))
         if details:
-            lines.append(details)
+            limited = "\n".join(details.splitlines()[: self.MAX_WATCH_DETAIL_LINES])
+            lines.append(limited)
         if link:
             safe_url = escape_markdown_url(str(link))
             lines.append(f"[View on Dexscreener]({safe_url})")
@@ -530,6 +586,98 @@ class SubscriptionService:
             return [], None, last_error
         return [], None, "transfer fetch failed"
 
+    async def _fetch_transaction_logs(
+        self, tx_hashes: Sequence[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        deduped: List[str] = []
+        seen: Set[str] = set()
+        for value in tx_hashes:
+            if not value:
+                continue
+            normalized = value.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(value)
+
+        if not deduped:
+            return {}
+
+        tasks = [self._fetch_single_transaction_logs(tx_hash) for tx_hash in deduped]
+        results: Dict[str, List[Dict[str, Any]]] = {}
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        for original, payload in zip(deduped, responses):
+            if isinstance(payload, Exception):
+                logger.warning(
+                    "watchlist_tx_log_error",
+                    hash=original,
+                    error=str(payload),
+                )
+                continue
+            results[original] = payload
+        return results
+
+    async def _fetch_single_transaction_logs(
+        self, tx_hash: str
+    ) -> List[Dict[str, Any]]:
+        params = {"transactionHash": tx_hash}
+        last_error: Exception | None = None
+        delay = 0.5
+        for attempt in range(1, self.LOG_FETCH_RETRIES + 1):
+            start = time.perf_counter()
+            try:
+                payload = await asyncio.wait_for(
+                    self.mcp.base.call_tool("getLogs", params),
+                    timeout=self.LOG_FETCH_TIMEOUT_SECONDS,
+                )
+            except Exception as exc:  # pragma: no cover - network/process errors
+                last_error = exc
+                duration = (time.perf_counter() - start) * 1000
+                logger.warning(
+                    "watchlist_tx_log_fetch_failed",
+                    hash=tx_hash,
+                    attempt=attempt,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    duration_ms=round(duration, 2),
+                )
+                if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+                    break
+                if attempt < self.LOG_FETCH_RETRIES:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                continue
+
+            items = []
+            if isinstance(payload, dict):
+                raw_items = (
+                    payload.get("items")
+                    or payload.get("result")
+                    or payload.get("logs")
+                    or []
+                )
+                if isinstance(raw_items, list):
+                    items = raw_items
+            if items:
+                duration = (time.perf_counter() - start) * 1000
+                logger.debug(
+                    "watchlist_tx_log_fetch_success",
+                    hash=tx_hash,
+                    attempt=attempt,
+                    duration_ms=round(duration, 2),
+                    log_count=len(items),
+                )
+                return items
+            break
+
+        if last_error:
+            logger.warning(
+                "watchlist_tx_log_give_up",
+                hash=tx_hash,
+                error=str(last_error),
+            )
+        return []
+
     def _transfer_failure_ttl(self) -> float:
         interval_seconds = max(1, self.interval_minutes) * 60
         return max(self.TRANSFER_FAILURE_TTL_SECONDS, interval_seconds)
@@ -594,6 +742,60 @@ class SubscriptionService:
             ),
         }
 
+    def _summarize_transaction_logs(
+        self, logs: Sequence[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        if not logs:
+            return []
+        entries: List[Dict[str, Any]] = []
+        for log in list(logs)[: self.MAX_LOGS_PER_TX]:
+            if not isinstance(log, dict):
+                continue
+            topics = log.get("topics")
+            topic0 = topics[0] if isinstance(topics, list) and topics else None
+            event_label = None
+            if isinstance(topic0, str):
+                event_label = self.KNOWN_EVENT_TOPICS.get(topic0)
+                if not event_label:
+                    event_label = f"Event:{topic0[2:10]}" if topic0.startswith("0x") else "Log"
+            address = log.get("address")
+            entries.append(
+                {
+                    "event": event_label or "Log",
+                    "address": str(address) if address else "",
+                    "topics": topics[:4] if isinstance(topics, list) else [],
+                    "data": log.get("data"),
+                }
+            )
+        return entries
+
+    def _format_event_detail(self, event: Mapping[str, Any]) -> List[str]:
+        timestamp = event.get("timestamp") or "recent"
+        amount_display = (
+            event.get("amountDisplay") or event.get("amount") or "Transfer"
+        )
+        from_addr = self._short_address(event.get("from"))
+        to_addr = self._short_address(event.get("to"))
+        summary = f"• {timestamp}: {amount_display} ({from_addr}→{to_addr})"
+        return [escape_markdown(summary)]
+
+    def _format_log_summary(
+        self, logs: Sequence[Mapping[str, Any]]
+    ) -> str:
+        if not logs:
+            return ""
+        parts: List[str] = []
+        for log in logs[: self.MAX_LOGS_PER_TX]:
+            if not isinstance(log, Mapping):
+                continue
+            event = log.get("event") or "Log"
+            location = self._short_address(log.get("address"))
+            if location:
+                parts.append(f"{event} @ {location}")
+            else:
+                parts.append(str(event))
+        return ", ".join(parts)
+
     def _strip_nfa(self, message: str) -> str:
         if not message:
             return ""
@@ -601,6 +803,27 @@ class SubscriptionService:
         if message.endswith(footer):
             return message[: -len(footer)].rstrip()
         return message
+
+    def _trim_summary_text(self, summary: str) -> str:
+        if not summary:
+            return ""
+        lines = [line.strip() for line in summary.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        lines = lines[: self.MAX_WATCH_SUMMARY_LINES]
+        trimmed = "\n".join(lines)
+        if len(trimmed) > self.MAX_WATCH_SUMMARY_CHARS:
+            trimmed = trimmed[: self.MAX_WATCH_SUMMARY_CHARS].rstrip() + "…"
+        return trimmed
+
+    def _truncate_section(self, text: str, limit: int) -> str:
+        if not text:
+            return ""
+        trimmed = text.strip()
+        if len(trimmed) <= limit:
+            return trimmed
+        safe_limit = max(0, limit - 1)
+        return trimmed[:safe_limit].rstrip() + "…"
 
     @staticmethod
     def _parse_log_timestamp(value: Any) -> datetime | None:
@@ -702,6 +925,32 @@ class SubscriptionService:
             slug = "base"
         return f"https://dexscreener.com/{slug}/{address}"
 
+    def _prune_sections_to_fit(self, sections: Sequence[str]) -> tuple[str, bool]:
+        cleaned = [section.strip() for section in sections if section and section.strip()]
+        if not cleaned:
+            return "", False
+
+        remaining = list(cleaned)
+        truncated = False
+        primary = cleaned[0]
+
+        while remaining:
+            body = join_messages(remaining)
+            candidate = append_not_financial_advice(body)
+            if len(candidate) <= self.MAX_WATCH_MESSAGE_CHARS:
+                return body, truncated
+            remaining.pop()
+            truncated = True
+
+        footer_overhead = len(append_not_financial_advice("")) - len("")
+        fallback_limit = max(0, self.MAX_WATCH_MESSAGE_CHARS - footer_overhead - 1)
+        fallback = (
+            self._truncate_section(primary, fallback_limit) if primary else ""
+        )
+        if fallback:
+            return fallback, True
+        return escape_markdown("Watchlist update trimmed."), True
+
     def _transfer_event_to_log(self, event: Dict[str, Any]) -> Dict[str, Any] | None:
         if not isinstance(event, dict):
             return None
@@ -732,6 +981,16 @@ class SubscriptionService:
             "topics": topics,
             "data": data_hex,
         }
+
+    @staticmethod
+    def _extract_tx_hash(entry: Mapping[str, Any]) -> str | None:
+        if not isinstance(entry, Mapping):
+            return None
+        for key in ("transactionHash", "hash", "txHash"):
+            value = entry.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return None
 
     @staticmethod
     def _address_to_topic(address: Any) -> str:
