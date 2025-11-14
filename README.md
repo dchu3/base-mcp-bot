@@ -17,7 +17,7 @@ Populate `.env` with your Telegram bot token, Gemini API key (and optional `GEMI
 ./scripts/start.sh
 ```
 
-The bot launches the Base, Dexscreener, and Honeypot MCP servers, handles `/latest`, `/routers`, `/subscriptions`, `/subscribe`, `/unsubscribe`, `/unsubscribe_all`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots (now annotated with Honeypot verdicts) when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint.
+The bot launches the Base, Dexscreener, and Honeypot MCP servers, handles `/latest`, `/routers`, `/subscriptions`, `/subscribe`, `/unsubscribe`, `/unsubscribe_all`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots (now annotated with Honeypot verdicts) when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint. Use `--scheduler-interval-minutes <1-60>` to temporarily adjust the subscription cadence without editing `.env`.
 
 Dexscreener rows now include contextual tags based on 24h price change:
 
@@ -34,7 +34,7 @@ The tags appear in brackets before the token pair, followed by a second line of 
 - Use `/subscribe <router> [minutes]` to store a recurring alert for the chosen router (default lookback comes from `DEFAULT_LOOKBACK_MINUTES` in `.env`).
 - `/subscriptions` echoes all active alerts for the current chat, including router addresses and polling cadence.
 - `/unsubscribe <router>` removes a single alert; `/unsubscribe_all` clears every stored router.
-- The scheduler runs every `SCHEDULER_INTERVAL_MINUTES` (configurable in `.env`) and polls each subscription. New swaps trigger Dexscreener token snapshots (matching `/latest` formatting) so alerts stay focused on actionable liquidity and price signals.
+- The scheduler runs every `SCHEDULER_INTERVAL_MINUTES` (defaults to 60 minutes, configurable in `.env`) and polls each subscription. New swaps trigger Dexscreener token snapshots (matching `/latest` formatting) so alerts stay focused on actionable liquidity and price signals. Override the cadence for local testing via `./scripts/start.sh --scheduler-interval-minutes 5`.
 
 ### Token watchlist
 
