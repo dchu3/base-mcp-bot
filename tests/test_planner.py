@@ -247,3 +247,166 @@ async def test_summarize_transactions_returns_token_summary() -> None:
     assert "AAA/BBB" in summary.message
     assert summary.tokens
     assert fake_dex.calls
+
+
+def test_extract_reasoning_and_json() -> None:
+    """Test extraction of reasoning blocks from Gemini output."""
+    planner = _make_planner()
+
+    # Test with reasoning block
+    text_with_reasoning = """
+    <reasoning>
+    The user wants to check PEPE token.
+    I need to call Dexscreener to get pair information.
+    </reasoning>
+    {"tools": [{"client": "dexscreener", "method": "searchPairs", "params": {"query": "PEPE"}}]}
+    """
+
+    reasoning, json_text = planner._extract_reasoning_and_json(text_with_reasoning)
+
+    assert "user wants to check PEPE" in reasoning
+    assert "Dexscreener" in reasoning
+    assert "<reasoning>" not in json_text
+    assert "tools" in json_text
+
+    # Test without reasoning block
+    text_without_reasoning = '{"tools": []}'
+    reasoning2, json_text2 = planner._extract_reasoning_and_json(text_without_reasoning)
+
+    assert reasoning2 == ""
+    assert json_text2 == '{"tools": []}'
+
+    # Test with case-insensitive tag
+    text_uppercase = "<REASONING>Test</REASONING>{'tools':[]}"
+    reasoning3, json_text3 = planner._extract_reasoning_and_json(text_uppercase)
+
+    assert reasoning3 == "Test"
+    assert "REASONING" not in json_text3
+
+
+def test_format_prior_results() -> None:
+    """Test formatting of prior results for prompt injection."""
+    planner = _make_planner()
+
+    # Empty results
+    assert planner._format_prior_results([]) == "none"
+    assert planner._format_prior_results(None) == "none"
+
+    # Router activity result
+    results = [
+        {
+            "call": ToolInvocation(
+                client="base",
+                method="getDexRouterActivity",
+                params={"router": "uniswap_v3"},
+            ),
+            "result": {"items": [{"hash": "0x1"}, {"hash": "0x2"}]},
+        }
+    ]
+
+    formatted = planner._format_prior_results(results)
+    assert "base.getDexRouterActivity: 2 transactions" in formatted
+
+    # Dexscreener result with tokens
+    results_with_tokens = [
+        {
+            "call": ToolInvocation(
+                client="dexscreener", method="searchPairs", params={"query": "PEPE"}
+            ),
+            "result": {},
+            "tokens": [{"symbol": "PEPE/WETH"}, {"symbol": "PEPE/USDC"}],
+        }
+    ]
+
+    formatted2 = planner._format_prior_results(results_with_tokens)
+    assert "dexscreener.searchPairs: PEPE/WETH, PEPE/USDC" in formatted2
+
+    # Error result
+    results_with_error = [
+        {
+            "call": ToolInvocation(client="honeypot", method="check_token", params={}),
+            "error": "Token not found on network",
+        }
+    ]
+
+    formatted3 = planner._format_prior_results(results_with_error)
+    assert "honeypot.check_token: FAILED" in formatted3
+
+
+def test_is_plan_complete_heuristics() -> None:
+    """Test the heuristic for determining if a plan needs refinement."""
+    planner = _make_planner()
+
+    # Plan is complete when no errors and all tokens fetched
+    dex_call = ToolInvocation(client="dexscreener", method="searchPairs", params={})
+    complete_results = [{"call": dex_call, "result": {}}]
+
+    assert planner._is_plan_complete(complete_results, "check PEPE", [dex_call])
+
+    # Plan is incomplete if there are errors
+    results_with_error = [{"call": dex_call, "error": "Failed"}]
+    assert not planner._is_plan_complete(results_with_error, "check PEPE", [dex_call])
+
+    # Plan is incomplete if user wants tokens but no dex calls made
+    router_call = ToolInvocation(
+        client="base", method="getDexRouterActivity", params={}
+    )
+    router_results = [{"call": router_call, "result": {}}]
+
+    assert not planner._is_plan_complete(
+        router_results,
+        "show me token prices",  # Contains "token" keyword
+        [router_call],
+    )
+
+    # Plan is incomplete if router activity found tokens but no dex calls
+    planner._extract_token_entries = lambda x: [{"symbol": "TEST"}]  # Mock method
+    assert not planner._is_plan_complete(router_results, "what's moving", [router_call])
+
+
+def test_summarize_results_for_refinement() -> None:
+    """Test summary generation for refinement prompts."""
+    planner = _make_planner()
+
+    results = [
+        {
+            "call": ToolInvocation(
+                client="base", method="getDexRouterActivity", params={}
+            ),
+            "result": {"items": [1, 2, 3]},
+        },
+        {
+            "call": ToolInvocation(
+                client="dexscreener", method="searchPairs", params={}
+            ),
+            "result": {},
+            "tokens": [{"symbol": "PEPE"}, {"symbol": "DOGE"}],
+        },
+        {
+            "call": ToolInvocation(client="honeypot", method="check_token", params={}),
+            "error": "Not found",
+        },
+    ]
+
+    summary = planner._summarize_results_for_refinement(results)
+
+    assert "base.getDexRouterActivity: SUCCESS (3 items)" in summary
+    assert "dexscreener.searchPairs: SUCCESS (tokens: PEPE, DOGE)" in summary
+    assert "honeypot.check_token: ERROR (Not found)" in summary
+
+
+def test_build_refinement_prompt() -> None:
+    """Test construction of refinement prompt."""
+    planner = _make_planner()
+
+    message = "What's moving on Base?"
+    context = {"network": "base-mainnet"}
+    results_summary = "base.getDexRouterActivity: SUCCESS (5 items)"
+
+    prompt = planner._build_refinement_prompt(message, context, results_summary)
+
+    assert "What's moving on Base?" in prompt
+    assert "base.getDexRouterActivity: SUCCESS (5 items)" in prompt
+    assert "additional tools" in prompt
+    assert '{"tools": []}' in prompt
+    assert "Respond with JSON only" in prompt

@@ -37,6 +37,15 @@ class ToolInvocation:
 
 
 @dataclass
+class PlanPayload:
+    """Parsed planner response from Gemini."""
+
+    confidence: float
+    clarification: str | None
+    tools: List[ToolInvocation]
+
+
+@dataclass
 class HoneypotTarget:
     """Token (and optional pair) queued for honeypot checks."""
 
@@ -113,6 +122,9 @@ class GeminiPlanner:
         router_map: Dict[str, Dict[str, str]],
         model_name: str,
         prompt_template: str | None = None,
+        confidence_threshold: float = 0.7,
+        enable_reflection: bool = True,
+        max_iterations: int = 2,
     ) -> None:
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel(model_name=model_name)
@@ -126,23 +138,67 @@ class GeminiPlanner:
         self.router_map = router_map
         self._honeypot_discovery_cache: Dict[str, Tuple[float, str | None]] = {}
         self._honeypot_missing_cache: Dict[str, float] = {}
+        self.confidence_threshold = confidence_threshold
+        self.enable_reflection = enable_reflection
+        self.max_iterations = max_iterations
 
     async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
-        plan = await self._plan(message, context)
-        if not plan:
+        """Execute plan with optional iterative refinement."""
+        iteration = 1
+        all_results = []
+
+        # Initial planning pass
+        plan_payload = await self._plan(message, context)
+
+        if plan_payload.confidence < self.confidence_threshold:
+            clarification_msg = (
+                plan_payload.clarification
+                or "I'm not sure I understood that. Could you rephrase?"
+            )
+            logger.info(
+                "planner_requesting_clarification",
+                confidence=plan_payload.confidence,
+                question=clarification_msg,
+            )
+            return PlannerResult(message=clarification_msg, tokens=[])
+
+        if not plan_payload.tools:
             logger.warning("planner_no_plan", message=message)
             return PlannerResult(
-                message="I could not determine a suitable tool to answer that. Please rephrase or specify a router/token.",
+                message="I could not determine a suitable tool to answer that. Please specify a router/token.",
                 tokens=[],
             )
 
-        results = await self._execute_plan(plan, context)
-        return self._render_response(message, context, results)
+        results = await self._execute_plan(plan_payload.tools, context)
+        all_results.extend(results)
+
+        # Check if refinement is needed and enabled
+        if (
+            not self.enable_reflection
+            or iteration >= self.max_iterations
+            or self._is_plan_complete(results, message, plan_payload.tools)
+        ):
+            if self._is_plan_complete(results, message, plan_payload.tools):
+                logger.info("planner_complete_first_pass", message=message)
+            return self._render_response(message, context, all_results)
+
+        # Refinement pass
+        logger.info("planner_attempting_refinement", iteration=iteration + 1)
+        refined_plan = await self._refine_plan(message, context, all_results)
+
+        if refined_plan.tools:
+            refined_results = await self._execute_plan(refined_plan.tools, context)
+            all_results.extend(refined_results)
+
+        return self._render_response(message, context, all_results)
 
     async def _plan(
-        self, message: str, context: Dict[str, Any]
-    ) -> List[ToolInvocation]:
-        prompt = self._build_prompt(message, context)
+        self,
+        message: str,
+        context: Dict[str, Any],
+        prior_results: List[Dict[str, Any]] | None = None,
+    ) -> PlanPayload:
+        prompt = self._build_prompt(message, context, prior_results)
         logger.info("planner_prompt", prompt=prompt)
         response = await asyncio.to_thread(
             self.model.generate_content,
@@ -151,14 +207,29 @@ class GeminiPlanner:
 
         text = self._extract_response_text(response)
         logger.info("planner_raw_response", output=text)
-        if not text:
-            return []
+
+        reasoning, json_text = self._extract_reasoning_and_json(text)
+
+        if reasoning:
+            logger.info("planner_reasoning", reasoning=reasoning, message=message)
+
+        if not json_text:
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
         try:
-            payload = json.loads(self._strip_code_fence(text))
+            payload = json.loads(self._strip_code_fence(json_text))
         except json.JSONDecodeError:
-            logger.error("planner_invalid_json", output=text)
-            return []
+            logger.error(
+                "planner_invalid_json",
+                output=json_text,
+                reasoning=reasoning,
+            )
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
+
+        confidence = float(payload.get("confidence", 1.0))
+        clarification = payload.get("clarification")
+
+        logger.info("planner_confidence", confidence=confidence, message=message)
 
         invocations = []
         for entry in payload.get("tools", []):
@@ -175,6 +246,7 @@ class GeminiPlanner:
             invocations.append(
                 ToolInvocation(client=client, method=method, params=params)
             )
+
         if invocations:
             logger.info(
                 "planner_plan",
@@ -187,9 +259,17 @@ class GeminiPlanner:
                     for call in invocations
                 ],
             )
-        return invocations
 
-    def _build_prompt(self, message: str, context: Dict[str, Any]) -> str:
+        return PlanPayload(
+            confidence=confidence, clarification=clarification, tools=invocations
+        )
+
+    def _build_prompt(
+        self,
+        message: str,
+        context: Dict[str, Any],
+        prior_results: List[Dict[str, Any]] | None = None,
+    ) -> str:
         routers = ", ".join(self.router_keys) or "none"
         token_hint = self._format_recent_tokens(context.get("recent_tokens") or [])
         last_router = context.get("last_router") or "unknown"
@@ -200,6 +280,9 @@ class GeminiPlanner:
             "default_lookback": context.get("default_lookback", 30),
             "recent_tokens": token_hint,
             "recent_router": last_router,
+            "prior_results": (
+                self._format_prior_results(prior_results) if prior_results else "none"
+            ),
         }
         prompt = self._prompt_template.safe_substitute(context_map)
         if "$" in prompt:
@@ -240,6 +323,190 @@ class GeminiPlanner:
         if stripped.startswith("```") and stripped.endswith("```"):
             return stripped[3:-3].strip()
         return stripped
+
+    @staticmethod
+    def _extract_reasoning_and_json(text: str) -> Tuple[str, str]:
+        """Separate chain-of-thought reasoning from JSON payload."""
+        reasoning_match = re.search(
+            r"<reasoning>(.*?)</reasoning>", text, re.DOTALL | re.IGNORECASE
+        )
+
+        reasoning = ""
+        if reasoning_match:
+            reasoning = reasoning_match.group(1).strip()
+            # Remove reasoning block from text
+            text = text[: reasoning_match.start()] + text[reasoning_match.end() :]
+
+        return reasoning, text.strip()
+
+    def _format_prior_results(self, results: List[Dict[str, Any]]) -> str:
+        """Format prior tool call results for injection into prompt."""
+        if not results:
+            return "none"
+
+        lines = []
+        for entry in results:
+            call = entry["call"]
+            if "error" in entry:
+                lines.append(f"- {call.client}.{call.method}: FAILED")
+            else:
+                result = entry.get("result", {})
+                if isinstance(result, dict) and "items" in result:
+                    count = len(result["items"])
+                    lines.append(f"- {call.client}.{call.method}: {count} transactions")
+                elif call.client == "dexscreener":
+                    tokens = entry.get("tokens", [])
+                    if tokens:
+                        symbols = [t.get("symbol", "?") for t in tokens[:2]]
+                        lines.append(
+                            f"- {call.client}.{call.method}: {', '.join(symbols)}"
+                        )
+                    else:
+                        lines.append(f"- {call.client}.{call.method}: SUCCESS")
+                else:
+                    lines.append(f"- {call.client}.{call.method}: SUCCESS")
+
+        return "\n".join(lines)
+
+    def _is_plan_complete(
+        self,
+        results: List[Dict[str, Any]],
+        message: str,
+        tools_called: List[ToolInvocation],
+    ) -> bool:
+        """Heuristic to determine if initial plan was sufficient."""
+        # Check for errors in critical calls
+        has_errors = any("error" in r for r in results)
+        if has_errors:
+            return False
+
+        # Check if user asked about tokens but no Dexscreener calls were made
+        token_intent_keywords = ["token", "price", "dex", "pair", "liquidity"]
+        user_wants_tokens = any(kw in message.lower() for kw in token_intent_keywords)
+
+        dex_calls = [t for t in tools_called if t.client == "dexscreener"]
+        if user_wants_tokens and not dex_calls:
+            return False
+
+        # Check if router activity was fetched but no token analysis followed
+        router_calls = [t for t in tools_called if t.method == "getDexRouterActivity"]
+        if router_calls and not dex_calls:
+            # Should have discovered tokens and called Dexscreener
+            discovered_tokens = any(
+                self._extract_token_entries(r.get("result", {})) for r in results
+            )
+            if discovered_tokens:
+                return False
+
+        # Default: plan is complete
+        return True
+
+    async def _refine_plan(
+        self,
+        message: str,
+        context: Dict[str, Any],
+        prior_results: List[Dict[str, Any]],
+    ) -> PlanPayload:
+        """Generate follow-up tool calls based on initial results."""
+        results_summary = self._summarize_results_for_refinement(prior_results)
+
+        refinement_prompt = self._build_refinement_prompt(
+            message, context, results_summary
+        )
+
+        logger.info("planner_refinement_prompt", prompt=refinement_prompt)
+
+        response = await asyncio.to_thread(
+            self.model.generate_content,
+            [{"role": "user", "parts": [{"text": refinement_prompt}]}],
+        )
+
+        text = self._extract_response_text(response)
+        reasoning, json_text = self._extract_reasoning_and_json(text)
+
+        if reasoning:
+            logger.info("planner_refinement_reasoning", reasoning=reasoning)
+
+        try:
+            payload = json.loads(self._strip_code_fence(json_text))
+        except json.JSONDecodeError:
+            logger.error("planner_refinement_invalid_json", output=json_text)
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
+
+        # Parse tools
+        invocations = []
+        for entry in payload.get("tools", []):
+            client = entry.get("client")
+            method = entry.get("method")
+            params = self._normalize_params(
+                client,
+                method,
+                entry.get("params", {}),
+                context.get("network"),
+            )
+            if client not in {"base", "dexscreener", "honeypot"} or not method:
+                continue
+            invocations.append(
+                ToolInvocation(client=client, method=method, params=params)
+            )
+
+        return PlanPayload(
+            confidence=1.0,  # Refinement doesn't use confidence
+            clarification=None,
+            tools=invocations,
+        )
+
+    def _summarize_results_for_refinement(self, results: List[Dict[str, Any]]) -> str:
+        """Create concise summary of tool call results for refinement prompt."""
+        summary_lines = []
+
+        for entry in results:
+            call = entry["call"]
+            status = "ERROR" if "error" in entry else "SUCCESS"
+
+            summary = f"{call.client}.{call.method}: {status}"
+
+            if status == "SUCCESS":
+                result = entry.get("result", {})
+                if isinstance(result, dict):
+                    # Extract key metrics
+                    if "items" in result:
+                        summary += f" ({len(result['items'])} items)"
+                    if call.client == "dexscreener":
+                        tokens = entry.get("tokens", [])
+                        if tokens:
+                            symbols = [t.get("symbol", "?") for t in tokens[:3]]
+                            summary += f" (tokens: {', '.join(symbols)})"
+                elif isinstance(result, list):
+                    summary += f" ({len(result)} items)"
+            else:
+                summary += f" ({entry['error'][:50]})"
+
+            summary_lines.append(summary)
+
+        return "\n".join(summary_lines)
+
+    def _build_refinement_prompt(
+        self, message: str, context: Dict[str, Any], results_summary: str
+    ) -> str:
+        """Construct prompt asking Gemini if additional tools are needed."""
+        return textwrap.dedent(
+            f"""
+            Original user request: "{message}"
+            
+            I already executed these tools:
+            {results_summary}
+            
+            Based on the results above, should I call additional tools to fully answer the user's request?
+            
+            If YES: Output a JSON plan with new tool calls (don't repeat calls already made).
+            If NO: Output {{"tools": []}}
+            
+            Available tools: base.getDexRouterActivity, base.getTransactionByHash, base.getContractABI, base.resolveToken, dexscreener.getTokenOverview, dexscreener.searchPairs, dexscreener.getPairByAddress, honeypot.check_token
+            
+            Respond with JSON only.
+        """
+        ).strip()
 
     def _normalize_params(
         self,

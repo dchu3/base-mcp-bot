@@ -82,6 +82,9 @@ async def main(interval_override_minutes: int | None = None) -> None:
         router_map=routers,
         model_name=settings.gemini_model,
         prompt_template=prompt_template,
+        confidence_threshold=settings.planner_confidence_threshold,
+        enable_reflection=settings.planner_enable_reflection,
+        max_iterations=settings.planner_max_iterations,
     )
     rate_limiter = RateLimiter(settings.rate_limit_per_user_per_min)
     scheduler = AsyncIOScheduler()
