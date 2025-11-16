@@ -84,6 +84,19 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    planner_confidence_threshold: float = Field(
+        default=0.7,
+        alias="PLANNER_CONFIDENCE_THRESHOLD",
+        ge=0.0,
+        le=1.0,
+    )
+    planner_enable_reflection: bool = Field(
+        default=True, alias="PLANNER_ENABLE_REFLECTION"
+    )
+    planner_max_iterations: int = Field(
+        default=2, alias="PLANNER_MAX_ITERATIONS", ge=1, le=5
+    )
+
     @field_validator("admin_user_ids", mode="before")
     @classmethod
     def _parse_admin_ids(cls, value: Any) -> List[int]:
