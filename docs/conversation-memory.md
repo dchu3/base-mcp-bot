@@ -178,3 +178,39 @@ Potential improvements (not yet implemented):
 - Export conversation history as JSON/text
 - Smart summarization to compress old messages
 - Cross-session memory for important tokens
+
+### `/clear`
+Clear all conversation history and start fresh:
+```
+User: /clear
+Bot: ✅ Conversation history cleared (15 messages deleted). Starting fresh!
+```
+
+**Use Cases**:
+- Reset context when switching topics
+- Clear sensitive information from history
+- Start debugging with clean slate
+- Remove old conversations manually
+
+**Behavior**:
+- Deletes all conversation messages for the user
+- Returns count of messages deleted
+- Creates new session on next message
+- Cannot be undone (permanent deletion)
+
+**Example Workflow**:
+```
+User: What's PEPE doing?
+Bot: PEPE is up 15%...
+
+User: Check that token
+Bot: [Understands "that token" = PEPE]
+
+User: /clear
+Bot: ✅ Conversation history cleared (2 messages deleted). Starting fresh!
+
+User: Check that token
+Bot: ❓ Which token? (no context)
+```
+
+**Note**: This is immediate and permanent. Deleted messages cannot be recovered.

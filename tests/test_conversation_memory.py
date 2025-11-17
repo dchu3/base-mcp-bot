@@ -147,3 +147,57 @@ async def test_conversation_history_limit(tmp_path):
         assert len(history) == 5
         assert history[0].content == "Message 10"
         assert history[4].content == "Message 14"
+
+
+@pytest.mark.asyncio
+async def test_clear_conversation_history(tmp_path) -> None:
+    """Test clearing conversation history for a user."""
+    db_path = tmp_path / "clear.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    async with db.session() as session:
+        repo = Repository(session)
+
+        user = await repo.get_or_create_user(12345)
+
+        # Add some conversation history
+        session_id = await repo.get_or_create_session(user.id)
+        for i in range(5):
+            await repo.save_conversation_message(
+                user_id=user.id,
+                role="user" if i % 2 == 0 else "assistant",
+                content=f"Message {i}",
+                session_id=session_id,
+            )
+
+        # Verify messages exist
+        history = await repo.get_conversation_history(user.id, limit=10)
+        assert len(history) == 5
+
+        # Clear history
+        count = await repo.clear_conversation_history(user.id)
+        assert count == 5
+
+        # Verify messages deleted
+        history = await repo.get_conversation_history(user.id, limit=10)
+        assert len(history) == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_conversation_history_empty(tmp_path) -> None:
+    """Test clearing when there's no history returns 0."""
+    db_path = tmp_path / "clear_empty.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    async with db.session() as session:
+        repo = Repository(session)
+
+        user = await repo.get_or_create_user(99999)
+
+        # Clear with no history
+        count = await repo.clear_conversation_history(user.id)
+        assert count == 0
