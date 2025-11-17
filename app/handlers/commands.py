@@ -58,6 +58,7 @@ def setup(application: Application, handler_context: HandlerContext) -> None:
     application.add_handler(CommandHandler("unwatch", unwatch_command))
     application.add_handler(CommandHandler("unwatch_all", unwatch_all_command))
     application.add_handler(CommandHandler("history", history_command))
+    application.add_handler(CommandHandler("clear", clear_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, natural_language_handler)
@@ -114,7 +115,8 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "/watchlist — show your saved tokens\n"
         "/unwatch <token_address> — remove a single token\n"
         "/unwatch_all — clear the entire watchlist\n\n"
-        "/history — view recent conversation messages\n\n"
+        "/history — view recent conversation messages\n"
+        "/clear — clear conversation history and start fresh\n\n"
         "You can also ask natural-language questions like "
         "'latest uniswap_v3 swaps last 15 minutes'."
     )
@@ -717,3 +719,33 @@ def _normalize_token_address(value: str | None) -> str | None:
     if address.startswith("0x") and len(address) == 42:
         return address.lower()
     return None
+
+
+async def clear_command(update: Update, context: CallbackContext) -> None:
+    """Clear all conversation history for the user."""
+    if not await ensure_user(update, context):
+        return
+
+    ctx = get_ctx(context)
+    target_chat_id = ctx.allowed_chat_id or (
+        update.effective_user.id if update.effective_user else None
+    )
+
+    if not target_chat_id:
+        await update.message.reply_text("Unable to identify user.", parse_mode=None)
+        return
+
+    async with ctx.db.session() as session:
+        repo = Repository(session)
+        user = await repo.get_or_create_user(target_chat_id)
+        count = await repo.clear_conversation_history(user.id)
+
+    if count > 0:
+        await update.message.reply_text(
+            f"✅ Conversation history cleared ({count} messages deleted). Starting fresh!",
+            parse_mode=None,
+        )
+    else:
+        await update.message.reply_text(
+            "No conversation history to clear.", parse_mode=None
+        )

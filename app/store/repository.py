@@ -332,3 +332,20 @@ class Repository:
             )
         )
         await self.session.commit()
+
+    async def clear_conversation_history(self, user_id: int) -> int:
+        """Delete all conversation messages for a user.
+
+        Args:
+            user_id: The user's ID
+
+        Returns:
+            Number of messages deleted
+        """
+        result = await self.session.execute(
+            ConversationMessage.__table__.delete().where(
+                ConversationMessage.user_id == user_id
+            )
+        )
+        await self.session.commit()
+        return result.rowcount

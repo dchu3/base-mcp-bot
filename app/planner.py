@@ -1193,6 +1193,8 @@ class GeminiPlanner:
                     result
                 )
                 for token in normalized_tokens:
+                    if not isinstance(token, dict):
+                        continue
                     dedupe_key = token.get("url") or token.get("symbol") or ""
                     if dedupe_key and dedupe_key in seen_pairs:
                         continue
