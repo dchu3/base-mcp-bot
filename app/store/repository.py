@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime, timedelta
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from sqlalchemy import select, text
 
-from .db import SeenTxn, Subscription, TokenContext, TokenWatch, User
+from .db import (
+    ConversationMessage,
+    SeenTxn,
+    Subscription,
+    TokenContext,
+    TokenWatch,
+    User,
+)
 
 TOKEN_CONTEXT_TTL_MINUTES = 60
+CONVERSATION_RETENTION_HOURS = 24
+CONVERSATION_SESSION_TIMEOUT_MINUTES = 30
 
 
 class Repository:
@@ -242,3 +253,82 @@ class Repository:
         if trimmed.startswith("0x"):
             return trimmed.lower()
         return trimmed
+
+    async def save_conversation_message(
+        self,
+        user_id: int,
+        role: str,
+        content: str,
+        session_id: str | None = None,
+        tool_calls: List[Dict[str, Any]] | None = None,
+        tokens_mentioned: List[str] | None = None,
+        confidence: float | None = None,
+    ) -> ConversationMessage:
+        """Save a conversation message (user or assistant)."""
+        message = ConversationMessage(
+            user_id=user_id,
+            role=role,
+            content=content,
+            session_id=session_id,
+            tool_calls=json.dumps(tool_calls) if tool_calls else None,
+            tokens_mentioned=json.dumps(tokens_mentioned) if tokens_mentioned else None,
+            confidence=confidence,
+        )
+        self.session.add(message)
+        await self.session.commit()
+        await self.session.refresh(message)
+        return message
+
+    async def get_conversation_history(
+        self,
+        user_id: int,
+        limit: int = 10,
+        session_id: str | None = None,
+    ) -> List[ConversationMessage]:
+        """Retrieve recent conversation messages for a user."""
+        query = (
+            select(ConversationMessage)
+            .where(ConversationMessage.user_id == user_id)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(limit)
+        )
+        if session_id:
+            query = query.where(ConversationMessage.session_id == session_id)
+
+        result = await self.session.execute(query)
+        messages = list(result.scalars().all())
+        return list(reversed(messages))
+
+    async def get_or_create_session(
+        self,
+        user_id: int,
+        inactivity_threshold_minutes: int = CONVERSATION_SESSION_TIMEOUT_MINUTES,
+    ) -> str:
+        """Get current session ID or create new one if inactive."""
+        result = await self.session.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.user_id == user_id)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        last_message = result.scalar_one_or_none()
+
+        if last_message:
+            time_since_last = datetime.utcnow() - last_message.created_at
+            if time_since_last.total_seconds() < (inactivity_threshold_minutes * 60):
+                return last_message.session_id or str(uuid.uuid4())
+
+        return str(uuid.uuid4())
+
+    async def purge_old_conversations(
+        self,
+        retention_hours: int = CONVERSATION_RETENTION_HOURS,
+    ) -> None:
+        """Remove conversation messages older than retention period."""
+        cutoff = datetime.utcnow() - timedelta(hours=retention_hours)
+        await self.session.execute(
+            ConversationMessage.__table__.delete().where(
+                ConversationMessage.created_at < cutoff
+            )
+        )
+        await self.session.commit()

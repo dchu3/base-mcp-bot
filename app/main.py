@@ -50,6 +50,7 @@ async def main(interval_override_minutes: int | None = None) -> None:
         BotCommand("watchlist", "Show saved tokens"),
         BotCommand("unwatch", "Remove a token from the watchlist"),
         BotCommand("unwatch_all", "Clear the watchlist"),
+        BotCommand("history", "View recent conversation"),
     ]
 
     await application.bot.delete_my_commands(scope=BotCommandScopeDefault())

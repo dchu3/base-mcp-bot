@@ -59,6 +59,18 @@ class TokenWatch(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ConversationMessage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    role: str
+    content: str
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    session_id: str | None = Field(default=None, index=True)
+    tool_calls: str | None = Field(default=None)
+    tokens_mentioned: str | None = Field(default=None)
+    confidence: float | None = Field(default=None)
+
+
 class Database:
     """Lightweight async database wrapper."""
 
@@ -113,4 +125,5 @@ __all__ = [
     "SeenTxn",
     "TokenContext",
     "TokenWatch",
+    "ConversationMessage",
 ]

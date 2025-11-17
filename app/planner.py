@@ -273,6 +273,9 @@ class GeminiPlanner:
         routers = ", ".join(self.router_keys) or "none"
         token_hint = self._format_recent_tokens(context.get("recent_tokens") or [])
         last_router = context.get("last_router") or "unknown"
+        conversation_history = self._format_conversation_history(
+            context.get("conversation_history")
+        )
         context_map = {
             "message": message,
             "network": context.get("network", "base"),
@@ -280,6 +283,7 @@ class GeminiPlanner:
             "default_lookback": context.get("default_lookback", 30),
             "recent_tokens": token_hint,
             "recent_router": last_router,
+            "conversation_history": conversation_history,
             "prior_results": (
                 self._format_prior_results(prior_results) if prior_results else "none"
             ),
@@ -312,6 +316,25 @@ class GeminiPlanner:
             if entry:
                 payload.append(entry)
         return json.dumps(payload) if payload else "none"
+
+    @staticmethod
+    def _format_conversation_history(history: Any) -> str:
+        """Format conversation history as numbered dialogue."""
+        if not history or not isinstance(history, list):
+            return "none"
+
+        lines = []
+        for msg in history[-10:]:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if not content:
+                continue
+            prefix = "User" if role == "user" else "Assistant"
+            lines.append(f"{prefix}: {content}")
+
+        return "\n".join(lines) if lines else "none"
 
     @staticmethod
     def _strip_code_fence(text: str) -> str:
@@ -474,8 +497,11 @@ class GeminiPlanner:
                         summary += f" ({len(result['items'])} items)"
                     if call.client == "dexscreener":
                         tokens = entry.get("tokens", [])
-                        if tokens:
-                            symbols = [t.get("symbol", "?") for t in tokens[:3]]
+                        if tokens and isinstance(tokens, list):
+                            symbols = [
+                                t.get("symbol", "?") if isinstance(t, dict) else "?"
+                                for t in tokens[:3]
+                            ]
                             summary += f" (tokens: {', '.join(symbols)})"
                 elif isinstance(result, list):
                     summary += f" ({len(result)} items)"
@@ -1191,6 +1217,37 @@ class GeminiPlanner:
                     add_nfa = True
                 continue
 
+            # Handle honeypot results with formatted output
+            if call.client == "honeypot" and call.method == "check_token":
+                summary = result.get("summary", {}) if isinstance(result, dict) else {}
+                verdict = summary.get("verdict", "UNKNOWN")
+                reason = summary.get("reason", "")
+
+                from app.utils.formatting import format_honeypot_verdict
+
+                verdict_text = format_honeypot_verdict(verdict, reason)
+
+                if verdict_text:
+                    sections.append(f"✅ Honeypot Check: {verdict_text}")
+
+                    # Add tax info if available
+                    taxes = result.get("taxes", {})
+                    limits = result.get("limits", {})
+                    if taxes or limits:
+                        details = []
+                        buy_tax = taxes.get("buyTax")
+                        sell_tax = taxes.get("sellTax")
+                        if buy_tax is not None:
+                            details.append(f"Buy Tax: {buy_tax}%")
+                        if sell_tax is not None:
+                            details.append(f"Sell Tax: {sell_tax}%")
+                        if details:
+                            sections.append("• " + " · ".join(details))
+                else:
+                    sections.append(f"*{title}*: {escape_markdown(str(summary))}")
+                continue
+
+            # Fallback for other tool results
             sections.append(
                 f"*{title}*:\n```\n{json.dumps(result, indent=2)[:1500]}\n```"
             )

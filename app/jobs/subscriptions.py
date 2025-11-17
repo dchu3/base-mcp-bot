@@ -54,9 +54,7 @@ class SubscriptionService:
         TRANSFER_TOPIC: "Transfer",
         "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67": "Swap",
     }
-    TRUNCATION_NOTICE = (
-        "Additional watchlist entries trimmed to fit Telegram limits."
-    )
+    TRUNCATION_NOTICE = "Additional watchlist entries trimmed to fit Telegram limits."
 
     def __init__(
         self,
@@ -88,6 +86,9 @@ class SubscriptionService:
             return
         self.scheduler.add_job(
             self._run_cycle, "interval", minutes=self.interval_minutes
+        )
+        self.scheduler.add_job(
+            self._purge_old_conversations, "interval", hours=6, id="purge_conversations"
         )
         self.scheduler.start()
         logger.info("subscription_scheduler_started", interval=self.interval_minutes)
@@ -323,7 +324,10 @@ class SubscriptionService:
         if was_trimmed:
             notice = escape_markdown(self.TRUNCATION_NOTICE)
             candidate = join_messages([body, notice])
-            if len(append_not_financial_advice(candidate)) <= self.MAX_WATCH_MESSAGE_CHARS:
+            if (
+                len(append_not_financial_advice(candidate))
+                <= self.MAX_WATCH_MESSAGE_CHARS
+            ):
                 body = candidate
 
         message = append_not_financial_advice(body)
@@ -479,8 +483,7 @@ class SubscriptionService:
             return None
         lookback = self.WATCH_ACTIVITY_LOOKBACK_MINUTES
         header = (
-            f"*{escape_markdown(label or 'Token')}* info "
-            f"\\(last {lookback}m\\)"
+            f"*{escape_markdown(label or 'Token')}* info " f"\\(last {lookback}m\\)"
         )
         lines = [header]
         if summary:
@@ -757,7 +760,9 @@ class SubscriptionService:
             if isinstance(topic0, str):
                 event_label = self.KNOWN_EVENT_TOPICS.get(topic0)
                 if not event_label:
-                    event_label = f"Event:{topic0[2:10]}" if topic0.startswith("0x") else "Log"
+                    event_label = (
+                        f"Event:{topic0[2:10]}" if topic0.startswith("0x") else "Log"
+                    )
             address = log.get("address")
             entries.append(
                 {
@@ -771,17 +776,13 @@ class SubscriptionService:
 
     def _format_event_detail(self, event: Mapping[str, Any]) -> List[str]:
         timestamp = event.get("timestamp") or "recent"
-        amount_display = (
-            event.get("amountDisplay") or event.get("amount") or "Transfer"
-        )
+        amount_display = event.get("amountDisplay") or event.get("amount") or "Transfer"
         from_addr = self._short_address(event.get("from"))
         to_addr = self._short_address(event.get("to"))
         summary = f"• {timestamp}: {amount_display} ({from_addr}→{to_addr})"
         return [escape_markdown(summary)]
 
-    def _format_log_summary(
-        self, logs: Sequence[Mapping[str, Any]]
-    ) -> str:
+    def _format_log_summary(self, logs: Sequence[Mapping[str, Any]]) -> str:
         if not logs:
             return ""
         parts: List[str] = []
@@ -926,7 +927,9 @@ class SubscriptionService:
         return f"https://dexscreener.com/{slug}/{address}"
 
     def _prune_sections_to_fit(self, sections: Sequence[str]) -> tuple[str, bool]:
-        cleaned = [section.strip() for section in sections if section and section.strip()]
+        cleaned = [
+            section.strip() for section in sections if section and section.strip()
+        ]
         if not cleaned:
             return "", False
 
@@ -944,9 +947,7 @@ class SubscriptionService:
 
         footer_overhead = len(append_not_financial_advice("")) - len("")
         fallback_limit = max(0, self.MAX_WATCH_MESSAGE_CHARS - footer_overhead - 1)
-        fallback = (
-            self._truncate_section(primary, fallback_limit) if primary else ""
-        )
+        fallback = self._truncate_section(primary, fallback_limit) if primary else ""
         if fallback:
             return fallback, True
         return escape_markdown("Watchlist update trimmed."), True
@@ -1020,3 +1021,13 @@ class SubscriptionService:
         if isinstance(payload, list):
             return [item for item in payload if isinstance(item, dict)]
         return []
+
+    async def _purge_old_conversations(self) -> None:
+        """Remove conversation messages older than retention period."""
+        try:
+            async with self.db.session() as session:
+                repo = Repository(session)
+                await repo.purge_old_conversations()
+                logger.info("purged_old_conversations")
+        except Exception as exc:
+            logger.error("conversation_purge_failed", error=str(exc))
