@@ -164,3 +164,20 @@ def append_not_financial_advice(message: str) -> str:
         return escape_markdown(NOT_FINANCIAL_ADVICE)
     footer = f"\n\n{escape_markdown(NOT_FINANCIAL_ADVICE)}"
     return trimmed + footer
+
+
+def unescape_markdown(text: str) -> str:
+    """Remove MarkdownV2 escape characters for plain text display."""
+    if not text:
+        return ""
+    special_chars = "_*[]()~`>#+-=|{}.!\\"
+    result = []
+    i = 0
+    while i < len(text):
+        if i < len(text) - 1 and text[i] == "\\" and text[i + 1] in special_chars:
+            result.append(text[i + 1])
+            i += 2
+        else:
+            result.append(text[i])
+            i += 1
+    return "".join(result)

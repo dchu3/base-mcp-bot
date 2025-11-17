@@ -335,3 +335,56 @@ async def test_watch_commands_flow(tmp_path) -> None:
     final_message = DummyMessage()
     await watchlist_command(build_update(final_message), build_context([]))
     assert final_message.calls[0][0] == "Your watchlist is empty."
+
+
+@pytest.mark.asyncio
+async def test_empty_response_uses_plain_text(tmp_path) -> None:
+    """Ensure empty planner response sends plain text without markdown errors."""
+    db_path = tmp_path / "bot_empty.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    planner = DummyPlanner(message="", tokens=[])
+    message_obj = DummyMessage()
+    
+    update = SimpleNamespace(
+        message=message_obj,
+        effective_user=SimpleNamespace(id=12345),
+        effective_chat=SimpleNamespace(id=12345),
+    )
+    
+    context = SimpleNamespace(
+        args=[],
+        application=SimpleNamespace(
+            bot_data={
+                "ctx": HandlerContext(
+                    db=db,
+                    planner=planner,
+                    rate_limiter=None,
+                    routers=DEFAULT_ROUTERS,
+                    network="base",
+                    default_lookback=30,
+                    subscription_service=None,
+                    admin_ids=[],
+                    allowed_chat_id=None,
+                )
+            }
+        ),
+    )
+
+    await send_planner_response(update, context, "test query")
+    
+    # Verify the "No recent data" message was sent
+    assert len(message_obj.calls) == 1
+    text, kwargs = message_obj.calls[0]
+    
+    # Check the message content
+    assert "No recent data returned for that request." in text
+    
+    # CRITICAL: Verify parse_mode=None is explicitly set
+    assert "parse_mode" in kwargs
+    assert kwargs["parse_mode"] is None
+    
+    # Verify disable_web_page_preview is set
+    assert kwargs.get("disable_web_page_preview") is True
