@@ -19,22 +19,9 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class Subscription(SQLModel, table=True):
-    user_id: int = Field(foreign_key="user.id", primary_key=True)
-    router_key: str = Field(primary_key=True)
-    lookback_minutes: int = Field(default=30)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-
 class Setting(SQLModel, table=True):
     key: str = Field(primary_key=True)
     value: str
-
-
-class SeenTxn(SQLModel, table=True):
-    tx_hash: str = Field(primary_key=True)
-    router_key: str
-    first_seen_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class TokenContext(SQLModel, table=True):
@@ -49,14 +36,6 @@ class TokenContext(SQLModel, table=True):
     chain_id: str | None = Field(default=None)
     saved_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class TokenWatch(SQLModel, table=True):
-    user_id: int = Field(foreign_key="user.id", primary_key=True)
-    token_address: str = Field(primary_key=True)
-    token_symbol: str | None = Field(default=None, index=True)
-    label: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ConversationMessage(SQLModel, table=True):
@@ -120,10 +99,7 @@ class Database:
 __all__ = [
     "Database",
     "User",
-    "Subscription",
     "Setting",
-    "SeenTxn",
     "TokenContext",
-    "TokenWatch",
     "ConversationMessage",
 ]
