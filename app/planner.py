@@ -83,6 +83,22 @@ class GeminiPlanner:
         "getPairByAddress",
     }
 
+    CLASSIFICATION_PROMPT = Template(
+        textwrap.dedent(
+            """
+            You are a router for a crypto trading bot.
+            Analyze the user message: "$message"
+            
+            Determine if this requires using external tools (Dexscreener, Honeypot, Base) or if it is general conversation.
+            
+            - TOOL_USE: "Price of PEPE", "Is this safe?", "Check 0x123...", "What's trending?", "Scan this token", "Analyze the last one".
+            - CHITCHAT: "Hello", "How are you?", "What can you do?", "Thanks", "Help", "Good morning".
+            
+            Respond with JSON: {"intent": "TOOL_USE" | "CHITCHAT"}
+            """
+        ).strip()
+    )
+
     DEFAULT_PROMPT = Template(
         textwrap.dedent(
             """
@@ -98,18 +114,15 @@ class GeminiPlanner:
             7. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
 
             Available tools (client.method):
-            - base.getDexRouterActivity(router: str, sinceMinutes: int)
-            - base.getTransactionByHash(hash: str)
-            - base.getContractABI(address: str)
-            - base.resolveToken(address: str)
-            - dexscreener.getTokenOverview(tokenAddress: str)
-            - dexscreener.searchPairs(query: str)
-            - dexscreener.getPairByAddress(pairAddress: str)
-            - honeypot.check_token(address: str, chainId: int, pair?: str, forceSimulateLiquidity?: bool)
+            $tool_definitions
 
             Respond strictly as JSON with this schema:
-            {"tools": [{"client": "base|dexscreener|honeypot", "method": "<method>", "params": {...}}]}
-            Do not include any commentary outside the JSON payload.
+            {
+                "reasoning": "thought process...",
+                "confidence": 1.0,
+                "clarification": null,
+                "tools": [{"client": "base|dexscreener|honeypot", "method": "<method>", "params": {...}}]
+            }
             """
         ).strip()
     )
@@ -144,6 +157,12 @@ class GeminiPlanner:
 
     async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
         """Execute plan with optional iterative refinement."""
+        # Step 0: Intent Classification
+        intent = await self._classify_intent(message)
+        if intent == "CHITCHAT":
+            logger.info("planner_intent_chitchat", message=message)
+            return await self._handle_chitchat(message, context)
+
         iteration = 1
         all_results = []
 
@@ -192,6 +211,54 @@ class GeminiPlanner:
 
         return self._render_response(message, context, all_results)
 
+    async def _classify_intent(self, message: str) -> str:
+        """Determine if message requires tools or is just conversation."""
+        prompt = self.CLASSIFICATION_PROMPT.safe_substitute(message=message)
+        try:
+            response = await asyncio.to_thread(
+                self.model.generate_content,
+                [{"role": "user", "parts": [{"text": prompt}]}],
+                generation_config={"response_mime_type": "application/json"},
+            )
+            text = self._extract_response_text(response)
+            payload = json.loads(text)
+            return payload.get("intent", "TOOL_USE")
+        except Exception as exc:
+            logger.warning("intent_classification_failed", error=str(exc))
+            return "TOOL_USE"  # Fallback to tool use
+
+    async def _handle_chitchat(
+        self, message: str, context: Dict[str, Any]
+    ) -> PlannerResult:
+        """Generate a conversational response without tools."""
+        history = self._format_conversation_history(context.get("conversation_history"))
+        prompt = textwrap.dedent(
+            f"""
+            You are a helpful Base L2 blockchain assistant.
+            
+            Conversation history:
+            {history}
+            
+            User: {message}
+            
+            Reply conversationally and concisely. If the user asks what you can do, mention you can check token prices, liquidity, and safety on Base.
+            """
+        ).strip()
+        
+        try:
+            response = await asyncio.to_thread(
+                self.model.generate_content,
+                [{"role": "user", "parts": [{"text": prompt}]}],
+            )
+            text = self._extract_response_text(response)
+            return PlannerResult(message=text, tokens=[])
+        except Exception as exc:
+            logger.error("chitchat_generation_failed", error=str(exc))
+            return PlannerResult(
+                message="I'm here to help with Base tokens. Ask me to check a token!",
+                tokens=[],
+            )
+
     async def _plan(
         self,
         message: str,
@@ -203,28 +270,21 @@ class GeminiPlanner:
         response = await asyncio.to_thread(
             self.model.generate_content,
             [{"role": "user", "parts": [{"text": prompt}]}],
+            generation_config={"response_mime_type": "application/json"},
         )
 
         text = self._extract_response_text(response)
         logger.info("planner_raw_response", output=text)
 
-        reasoning, json_text = self._extract_reasoning_and_json(text)
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            logger.error("planner_invalid_json", output=text)
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
+        reasoning = payload.get("reasoning", "")
         if reasoning:
             logger.info("planner_reasoning", reasoning=reasoning, message=message)
-
-        if not json_text:
-            return PlanPayload(confidence=0.0, clarification=None, tools=[])
-
-        try:
-            payload = json.loads(self._strip_code_fence(json_text))
-        except json.JSONDecodeError:
-            logger.error(
-                "planner_invalid_json",
-                output=json_text,
-                reasoning=reasoning,
-            )
-            return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
         confidence = float(payload.get("confidence", 1.0))
         clarification = payload.get("clarification")
@@ -287,6 +347,7 @@ class GeminiPlanner:
         conversation_history = self._format_conversation_history(
             context.get("conversation_history")
         )
+        tool_definitions = self._format_tool_definitions()
         context_map = {
             "message": message,
             "network": context.get("network", "base"),
@@ -295,6 +356,7 @@ class GeminiPlanner:
             "recent_tokens": token_hint,
             "recent_router": last_router,
             "conversation_history": conversation_history,
+            "tool_definitions": tool_definitions,
             "prior_results": (
                 self._format_prior_results(prior_results) if prior_results else "none"
             ),
@@ -303,6 +365,32 @@ class GeminiPlanner:
         if "$" in prompt:
             logger.warning("prompt_unresolved_placeholders", prompt=prompt)
         return prompt
+
+    def _format_tool_definitions(self) -> str:
+        """Format available MCP tools into a prompt-friendly list."""
+        tools = self.mcp_manager.get_available_tools()
+        if not tools:
+            return "No tools available."
+
+        lines = []
+        for tool in tools:
+            name = tool.get("name")
+            description = tool.get("description", "No description.")
+            schema = tool.get("inputSchema", {})
+            props = schema.get("properties", {})
+            required = set(schema.get("required", []))
+
+            args = []
+            for prop_name, prop_def in props.items():
+                prop_type = prop_def.get("type", "any")
+                if prop_name not in required:
+                    prop_name = f"{prop_name}?"
+                args.append(f"{prop_name}: {prop_type}")
+
+            sig = f"- {name}({', '.join(args)})"
+            lines.append(f"{sig}\n  {description}")
+
+        return "\n".join(lines)
 
     def _format_recent_tokens(self, tokens: Any) -> str:
         if not isinstance(tokens, list):
@@ -346,32 +434,6 @@ class GeminiPlanner:
             lines.append(f"{prefix}: {content}")
 
         return "\n".join(lines) if lines else "none"
-
-    @staticmethod
-    def _strip_code_fence(text: str) -> str:
-        """Remove Markdown code fences from the model output if present."""
-        stripped = text.strip()
-        fence_match = re.match(r"```[a-zA-Z0-9]*\n(.+?)\n```", stripped, re.DOTALL)
-        if fence_match:
-            return fence_match.group(1).strip()
-        if stripped.startswith("```") and stripped.endswith("```"):
-            return stripped[3:-3].strip()
-        return stripped
-
-    @staticmethod
-    def _extract_reasoning_and_json(text: str) -> Tuple[str, str]:
-        """Separate chain-of-thought reasoning from JSON payload."""
-        reasoning_match = re.search(
-            r"<reasoning>(.*?)</reasoning>", text, re.DOTALL | re.IGNORECASE
-        )
-
-        reasoning = ""
-        if reasoning_match:
-            reasoning = reasoning_match.group(1).strip()
-            # Remove reasoning block from text
-            text = text[: reasoning_match.start()] + text[reasoning_match.end() :]
-
-        return reasoning, text.strip()
 
     def _format_prior_results(self, results: List[Dict[str, Any]]) -> str:
         """Format prior tool call results for injection into prompt."""
@@ -432,6 +494,14 @@ class GeminiPlanner:
             if discovered_tokens:
                 return False
 
+        # Check for safety/honeypot intent
+        safety_keywords = ["honeypot", "safe", "safety", "audit", "risk"]
+        user_wants_safety = any(kw in message.lower() for kw in safety_keywords)
+        honeypot_calls = [t for t in tools_called if t.client == "honeypot"]
+        
+        if user_wants_safety and not honeypot_calls:
+             return False
+
         # Default: plan is complete
         return True
 
@@ -453,19 +523,20 @@ class GeminiPlanner:
         response = await asyncio.to_thread(
             self.model.generate_content,
             [{"role": "user", "parts": [{"text": refinement_prompt}]}],
+            generation_config={"response_mime_type": "application/json"},
         )
 
         text = self._extract_response_text(response)
-        reasoning, json_text = self._extract_reasoning_and_json(text)
+        
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            logger.error("planner_refinement_invalid_json", output=text)
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
+        reasoning = payload.get("reasoning", "")
         if reasoning:
             logger.info("planner_refinement_reasoning", reasoning=reasoning)
-
-        try:
-            payload = json.loads(self._strip_code_fence(json_text))
-        except json.JSONDecodeError:
-            logger.error("planner_refinement_invalid_json", output=json_text)
-            return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
         # Ensure payload is a dict
         if not isinstance(payload, dict):
@@ -537,11 +608,12 @@ class GeminiPlanner:
                     if call.client == "dexscreener":
                         tokens = entry.get("tokens", [])
                         if tokens and isinstance(tokens, list):
-                            symbols = [
-                                t.get("symbol", "?") if isinstance(t, dict) else "?"
-                                for t in tokens[:3]
-                            ]
-                            summary += f" (tokens: {', '.join(symbols)})"
+                            items = []
+                            for t in tokens[:3]:
+                                sym = t.get("symbol", "?") if isinstance(t, dict) else "?"
+                                addr = t.get("address", "?") if isinstance(t, dict) else "?"
+                                items.append(f"{sym} ({addr})")
+                            summary += f" (tokens: {', '.join(items)})"
                 elif isinstance(result, list):
                     summary += f" ({len(result)} items)"
             else:
@@ -580,7 +652,10 @@ class GeminiPlanner:
             - Get the token address from Dexscreener first before calling honeypot
             
             Example JSON format:
-            {{"tools": [{{"client": "dexscreener", "method": "searchPairs", "params": {{"query": "PEPE"}}}}]}}
+            {{
+                "reasoning": "I need to check the safety of the token I just found.",
+                "tools": [{{"client": "dexscreener", "method": "searchPairs", "params": {{"query": "PEPE"}}}}]
+            }}
             
             Respond with JSON only.
         """
