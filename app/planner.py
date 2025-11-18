@@ -243,6 +243,17 @@ class GeminiPlanner:
             )
             if client not in {"base", "dexscreener", "honeypot"} or not method:
                 continue
+
+            # Skip if normalize_params returned empty dict (invalid params)
+            if not params:
+                logger.warning(
+                    "planner_skipping_invalid_tool",
+                    client=client,
+                    method=method,
+                    reason="empty_params_after_normalization",
+                )
+                continue
+
             invocations.append(
                 ToolInvocation(client=client, method=method, params=params)
             )
@@ -456,9 +467,26 @@ class GeminiPlanner:
             logger.error("planner_refinement_invalid_json", output=json_text)
             return PlanPayload(confidence=0.0, clarification=None, tools=[])
 
+        # Ensure payload is a dict
+        if not isinstance(payload, dict):
+            logger.error(
+                "planner_refinement_invalid_type", payload_type=type(payload).__name__
+            )
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
+
         # Parse tools
         invocations = []
-        for entry in payload.get("tools", []):
+        tools_list = payload.get("tools", [])
+        if not isinstance(tools_list, list):
+            logger.error(
+                "planner_refinement_tools_not_list",
+                tools_type=type(tools_list).__name__,
+            )
+            return PlanPayload(confidence=0.0, clarification=None, tools=[])
+
+        for entry in tools_list:
+            if not isinstance(entry, dict):
+                continue
             client = entry.get("client")
             method = entry.get("method")
             params = self._normalize_params(
@@ -469,6 +497,17 @@ class GeminiPlanner:
             )
             if client not in {"base", "dexscreener", "honeypot"} or not method:
                 continue
+
+            # Skip if normalize_params returned empty dict (invalid params)
+            if not params:
+                logger.warning(
+                    "planner_refinement_skipping_invalid_tool",
+                    client=client,
+                    method=method,
+                    reason="empty_params_after_normalization",
+                )
+                continue
+
             invocations.append(
                 ToolInvocation(client=client, method=method, params=params)
             )
@@ -528,7 +567,20 @@ class GeminiPlanner:
             If YES: Output a JSON plan with new tool calls (don't repeat calls already made).
             If NO: Output {{"tools": []}}
             
-            Available tools: base.getDexRouterActivity, base.getTransactionByHash, base.getContractABI, base.resolveToken, dexscreener.getTokenOverview, dexscreener.searchPairs, dexscreener.getPairByAddress, honeypot.check_token
+            Available tools:
+            - dexscreener.searchPairs
+            - dexscreener.getPairsByToken (requires tokenAddress)
+            - honeypot.check_token (requires address: "0x..." and chainId: 8453)
+            - base.resolveToken
+            - base.getTransactionByHash
+            
+            IMPORTANT: 
+            - Use "client" and "method" fields (NOT "tool_name")
+            - honeypot.check_token requires a 0x-prefixed address, NOT a symbol
+            - Get the token address from Dexscreener first before calling honeypot
+            
+            Example JSON format:
+            {{"tools": [{{"client": "dexscreener", "method": "searchPairs", "params": {{"query": "PEPE"}}}}]}}
             
             Respond with JSON only.
         """
@@ -596,6 +648,23 @@ class GeminiPlanner:
             normalized.pop("lookbackMinutes", None)
             normalized.pop("since_minutes", None)
             normalized.pop("minutes", None)
+
+        # Validate honeypot check has proper address
+        if client == "honeypot" and method == "check_token":
+            address = normalized.get("address")
+            if address and isinstance(address, str):
+                # Check if it's a valid 0x address
+                if not address.startswith("0x") or len(address) != 42:
+                    logger.warning(
+                        "honeypot_invalid_address",
+                        address=address,
+                        reason="Address must be 0x-prefixed 40-char hex",
+                    )
+                    # Don't call honeypot with invalid address
+                    return {}
+            else:
+                logger.warning("honeypot_missing_address", params=params)
+                return {}
 
         return normalized
 
@@ -716,7 +785,7 @@ class GeminiPlanner:
         collected_tokens: Dict[str, str] = {}
         planned_token_keys: Set[str] = set()
         chain_id = self._derive_chain_id(context.get("network"))
-        chain_numeric = self._derive_chain_numeric(context.get("network"))
+        # chain_numeric removed - was only used for auto-honeypot checks
 
         for call in plan:
             try:
@@ -812,13 +881,15 @@ class GeminiPlanner:
                 )
                 results.append({"call": invocation, "error": str(exc)})
 
-        honeypot_targets = self._select_honeypot_targets(results, collected_tokens)
-        if honeypot_targets:
-            verdicts = await self._fetch_honeypot_verdicts(
-                honeypot_targets, chain_numeric
-            )
-            if verdicts:
-                self._annotate_token_verdicts(results, verdicts)
+        # Disabled: Auto-honeypot checks were blocking results when API returns 404
+        # Only run honeypot when explicitly requested via planner tool call
+        # honeypot_targets = self._select_honeypot_targets(results, collected_tokens)
+        # if honeypot_targets:
+        #     verdicts = await self._fetch_honeypot_verdicts(
+        #         honeypot_targets, chain_numeric
+        #     )
+        #     if verdicts:
+        #         self._annotate_token_verdicts(results, verdicts)
 
         return results
 
@@ -1195,6 +1266,13 @@ class GeminiPlanner:
                 for token in normalized_tokens:
                     if not isinstance(token, dict):
                         continue
+
+                    # Filter to Base chain only (unless explicitly using another chain)
+                    token_chain = token.get("chainId", "").lower()
+                    if token_chain and token_chain != "base":
+                        # Skip tokens from other chains
+                        continue
+
                     dedupe_key = token.get("url") or token.get("symbol") or ""
                     if dedupe_key and dedupe_key in seen_pairs:
                         continue
@@ -1448,7 +1526,10 @@ class GeminiPlanner:
 
     def _extract_token_entries(self, result: Any) -> List[Dict[str, str]]:
         if isinstance(result, dict):
-            tokens = result.get("tokens") or result.get("results")
+            # Dexscreener returns "pairs" for searchPairs
+            tokens = (
+                result.get("tokens") or result.get("results") or result.get("pairs")
+            )
             if not isinstance(tokens, list):
                 return []
         elif isinstance(result, list):
@@ -1540,6 +1621,8 @@ class GeminiPlanner:
         }
         if base_symbol:
             normalized["baseSymbol"] = str(base_symbol)
+        if chain_identifier:
+            normalized["chainId"] = str(chain_identifier)
         token_name = token.get("name")
         if not token_name and isinstance(base_token, dict):
             token_name = base_token.get("name")
