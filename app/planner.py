@@ -116,6 +116,7 @@ class GeminiPlanner:
             - Mention any honeypot risks clearly (SAFE, CAUTION, DO_NOT_TRADE).
             - If the tool failed or returned no data, explain that simply.
             - Do not invent data.
+            - Do not use markdown formatting (no backticks, bold, or italics). Use plain text.
             """
         ).strip()
     )
@@ -325,7 +326,9 @@ class GeminiPlanner:
             [{"role": "user", "parts": [{"text": prompt}]}],
         )
 
-        return self._extract_response_text(response).strip()
+        text = self._extract_response_text(response).strip()
+        # Ensure the text is safe for Telegram MarkdownV2
+        return escape_markdown(text)
 
     async def _plan(
         self,
