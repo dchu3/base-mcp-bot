@@ -99,6 +99,27 @@ class GeminiPlanner:
         ).strip()
     )
 
+    SYNTHESIS_PROMPT = Template(
+        textwrap.dedent(
+            """
+            You are a crypto assistant. Answer the user's question based ONLY on the tool results below.
+
+            User Question: "$message"
+
+            Tool Results:
+            $results
+
+            Instructions:
+            - Be conversational, concise, and helpful.
+            - Synthesize the data into a natural summary (don't just list JSON fields).
+            - If comparing tokens, highlight key differences (price, liquidity, safety).
+            - Mention any honeypot risks clearly (SAFE, CAUTION, DO_NOT_TRADE).
+            - If the tool failed or returned no data, explain that simply.
+            - Do not invent data.
+            """
+        ).strip()
+    )
+
     DEFAULT_PROMPT = Template(
         textwrap.dedent(
             """
@@ -193,23 +214,37 @@ class GeminiPlanner:
 
         # Check if refinement is needed and enabled
         if (
-            not self.enable_reflection
-            or iteration >= self.max_iterations
-            or self._is_plan_complete(results, message, plan_payload.tools)
+            self.enable_reflection
+            and iteration < self.max_iterations
+            and not self._is_plan_complete(results, message, plan_payload.tools)
         ):
-            if self._is_plan_complete(results, message, plan_payload.tools):
-                logger.info("planner_complete_first_pass", message=message)
-            return self._render_response(message, context, all_results)
+            # Refinement pass
+            logger.info("planner_attempting_refinement", iteration=iteration + 1)
+            refined_plan = await self._refine_plan(message, context, all_results)
 
-        # Refinement pass
-        logger.info("planner_attempting_refinement", iteration=iteration + 1)
-        refined_plan = await self._refine_plan(message, context, all_results)
+            if refined_plan.tools:
+                refined_results = await self._execute_plan(refined_plan.tools, context)
+                all_results.extend(refined_results)
+        elif self._is_plan_complete(results, message, plan_payload.tools):
+            logger.info("planner_complete_first_pass", message=message)
 
-        if refined_plan.tools:
-            refined_results = await self._execute_plan(refined_plan.tools, context)
-            all_results.extend(refined_results)
+        # Generate deterministic result for context extraction and fallback
+        deterministic_result = self._render_response(message, context, all_results)
 
-        return self._render_response(message, context, all_results)
+        # Attempt conversational synthesis
+        try:
+            synthesized_text = await self._synthesize_response(message, all_results)
+            if synthesized_text:
+                # Re-attach NFA disclaimer if tokens are present
+                if deterministic_result.tokens:
+                    synthesized_text = append_not_financial_advice(synthesized_text)
+                return PlannerResult(
+                    message=synthesized_text, tokens=deterministic_result.tokens
+                )
+        except Exception as exc:
+            logger.error("planner_synthesis_failed", error=str(exc))
+
+        return deterministic_result
 
     async def _classify_intent(self, message: str) -> str:
         """Determine if message requires tools or is just conversation."""
@@ -258,6 +293,39 @@ class GeminiPlanner:
                 message="I'm here to help with Base tokens. Ask me to check a token!",
                 tokens=[],
             )
+
+    async def _synthesize_response(
+        self, message: str, results: List[Dict[str, Any]]
+    ) -> str | None:
+        """Generate a natural language response from tool results."""
+        if not results:
+            return None
+
+        # Prepare results for the model (convert to JSON string)
+        # Filter out 'raw' fields to reduce prompt size
+        filtered_results = []
+        for result in results:
+            if isinstance(result, dict):
+                filtered = {k: v for k, v in result.items() if k != "raw"}
+                filtered_results.append(filtered)
+            else:
+                filtered_results.append(result)
+
+        # Using default=str to handle any non-serializable objects
+        results_text = json.dumps(filtered_results, indent=2, default=str)
+
+        prompt = self.SYNTHESIS_PROMPT.safe_substitute(
+            message=message, results=results_text
+        )
+
+        logger.info("planner_synthesis_prompt", prompt_len=len(prompt))
+
+        response = await asyncio.to_thread(
+            self.model.generate_content,
+            [{"role": "user", "parts": [{"text": prompt}]}],
+        )
+
+        return self._extract_response_text(response).strip()
 
     async def _plan(
         self,

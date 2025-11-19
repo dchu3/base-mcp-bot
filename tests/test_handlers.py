@@ -71,9 +71,9 @@ async def test_send_planner_response_includes_token_context(tmp_path) -> None:
 
     # Verify planner received token context
     assert planner.last_payload is not None
-    assert "cachedWatchlist" in planner.last_payload
-    assert len(planner.last_payload["cachedWatchlist"]) == 1
-    assert planner.last_payload["cachedWatchlist"][0]["symbol"] == "TEST"
+    assert "recent_tokens" in planner.last_payload
+    assert len(planner.last_payload["recent_tokens"]) == 1
+    assert planner.last_payload["recent_tokens"][0]["symbol"] == "TEST"
 
 
 @pytest.mark.asyncio

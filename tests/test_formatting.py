@@ -96,7 +96,7 @@ def test_format_token_summary_appends_transfer_details_before_link():
     }
     output = format_token_summary(entry)
     expected_summary = (
-        f"Transfers: {escape_markdown('Strong inflows from two whales.')}"
+        f"Info: {escape_markdown('Strong inflows from two whales.')}"
     )
     assert expected_summary in output
     assert entry["activityDetails"] in output
