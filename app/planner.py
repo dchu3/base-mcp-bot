@@ -113,7 +113,7 @@ class GeminiPlanner:
             - Be conversational, concise, and helpful.
             - Synthesize the data into a natural summary (don't just list JSON fields).
             - If comparing tokens, highlight key differences (price, liquidity, safety).
-            - Mention any Honeypot risks clearly (SAFE, CAUTION, DO_NOT_TRADE).
+            - Mention any honeypot risks clearly (SAFE, CAUTION, DO_NOT_TRADE).
             - If the tool failed or returned no data, explain that simply.
             - Do not invent data.
             """
@@ -214,21 +214,19 @@ class GeminiPlanner:
 
         # Check if refinement is needed and enabled
         if (
-            not self.enable_reflection
-            or iteration >= self.max_iterations
-            or self._is_plan_complete(results, message, plan_payload.tools)
+            self.enable_reflection
+            and iteration < self.max_iterations
+            and not self._is_plan_complete(results, message, plan_payload.tools)
         ):
-            if self._is_plan_complete(results, message, plan_payload.tools):
-                logger.info("planner_complete_first_pass", message=message)
-            return self._render_response(message, context, all_results)
+            # Refinement pass
+            logger.info("planner_attempting_refinement", iteration=iteration + 1)
+            refined_plan = await self._refine_plan(message, context, all_results)
 
-        # Refinement pass
-        logger.info("planner_attempting_refinement", iteration=iteration + 1)
-        refined_plan = await self._refine_plan(message, context, all_results)
-
-        if refined_plan.tools:
-            refined_results = await self._execute_plan(refined_plan.tools, context)
-            all_results.extend(refined_results)
+            if refined_plan.tools:
+                refined_results = await self._execute_plan(refined_plan.tools, context)
+                all_results.extend(refined_results)
+        elif self._is_plan_complete(results, message, plan_payload.tools):
+            logger.info("planner_complete_first_pass", message=message)
 
         # Generate deterministic result for context extraction and fallback
         deterministic_result = self._render_response(message, context, all_results)
@@ -304,10 +302,17 @@ class GeminiPlanner:
             return None
 
         # Prepare results for the model (convert to JSON string)
-        # We filter out large raw fields if necessary, but for now dump everything
-        # except maybe 'raw' fields from honeypot if they are huge.
+        # Filter out 'raw' fields to reduce prompt size
+        filtered_results = []
+        for result in results:
+            if isinstance(result, dict):
+                filtered = {k: v for k, v in result.items() if k != "raw"}
+                filtered_results.append(filtered)
+            else:
+                filtered_results.append(result)
+
         # Using default=str to handle any non-serializable objects
-        results_text = json.dumps(results, indent=2, default=str)
+        results_text = json.dumps(filtered_results, indent=2, default=str)
 
         prompt = self.SYNTHESIS_PROMPT.safe_substitute(
             message=message, results=results_text

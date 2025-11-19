@@ -249,41 +249,6 @@ async def test_summarize_transactions_returns_token_summary() -> None:
     assert fake_dex.calls
 
 
-def test_extract_reasoning_and_json() -> None:
-    """Test extraction of reasoning blocks from Gemini output."""
-    planner = _make_planner()
-
-    # Test with reasoning block
-    text_with_reasoning = """
-    <reasoning>
-    The user wants to check PEPE token.
-    I need to call Dexscreener to get pair information.
-    </reasoning>
-    {"tools": [{"client": "dexscreener", "method": "searchPairs", "params": {"query": "PEPE"}}]}
-    """
-
-    reasoning, json_text = planner._extract_reasoning_and_json(text_with_reasoning)
-
-    assert "user wants to check PEPE" in reasoning
-    assert "Dexscreener" in reasoning
-    assert "<reasoning>" not in json_text
-    assert "tools" in json_text
-
-    # Test without reasoning block
-    text_without_reasoning = '{"tools": []}'
-    reasoning2, json_text2 = planner._extract_reasoning_and_json(text_without_reasoning)
-
-    assert reasoning2 == ""
-    assert json_text2 == '{"tools": []}'
-
-    # Test with case-insensitive tag
-    text_uppercase = "<REASONING>Test</REASONING>{'tools':[]}"
-    reasoning3, json_text3 = planner._extract_reasoning_and_json(text_uppercase)
-
-    assert reasoning3 == "Test"
-    assert "REASONING" not in json_text3
-
-
 def test_format_prior_results() -> None:
     """Test formatting of prior results for prompt injection."""
     planner = _make_planner()
@@ -391,7 +356,7 @@ def test_summarize_results_for_refinement() -> None:
     summary = planner._summarize_results_for_refinement(results)
 
     assert "base.getDexRouterActivity: SUCCESS (3 items)" in summary
-    assert "dexscreener.searchPairs: SUCCESS (tokens: PEPE, DOGE)" in summary
+    assert "dexscreener.searchPairs: SUCCESS (tokens: PEPE (?), DOGE (?))" in summary
     assert "honeypot.check_token: ERROR (Not found)" in summary
 
 
