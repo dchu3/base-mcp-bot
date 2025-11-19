@@ -17,35 +17,32 @@ Populate `.env` with your Telegram bot token, Gemini API key (and optional `GEMI
 ./scripts/start.sh
 ```
 
-The bot launches the Base, Dexscreener, and Honeypot MCP servers, handles `/latest`, `/routers`, `/subscriptions`, `/subscribe`, `/unsubscribe`, `/unsubscribe_all`, and natural-language requests, and sends subscription updates on an interval. `/latest` automatically fetches swap activity and augments it with Dexscreener token snapshots (now annotated with Honeypot verdicts) when available. Pass additional flags (such as `--log-level`) after the script name and they will be forwarded to the Python entrypoint. Use `--scheduler-interval-minutes <1-60>` to temporarily adjust the subscription cadence without editing `.env`.
+The bot launches the Base, Dexscreener, and Honeypot MCP servers and listens for natural language requests. It uses a Gemini-powered planner to dynamically select the right tools for your questions.
 
-Dexscreener rows now include contextual tags based on 24h price change:
+**Example interactions:**
+- "What's PEPE doing?"
+- "Show me recent Uniswap activity"
+- "Check honeypot for ZORA"
+- "What are the top tokens on Base?"
+- "Tell me more about that token" (uses conversation context)
 
-- **WATCH** — absolute move ≥5% and <15%; worth keeping an eye on.
-- **ALERT** — move ≥15%; highlights strong positive momentum.
-- **RISK** — move ≤−15%; flags sharp drawdowns.
+### Features
 
-Each snapshot also shows the Honeypot verdict (Safe to trade / Caution / Do not trade) with a short reason pulled from the Honeypot MCP server so Telegram alerts highlight smart-contract risk alongside price action.
+- **Dynamic Tool Discovery**: The bot automatically learns available tools from connected MCP servers at startup. No manual configuration required when adding new tools.
+- **Conversational Memory**: Remembers recent tokens and context, allowing for follow-up questions like "Is it safe?" or "Check the second one".
+- **Intent Classification**: Distinguishes between casual chitchat and tool-based requests to save costs and reduce latency.
+- **Safety Checks**: Automatically integrates Honeypot checks when analyzing tokens, with forced refinement if safety data is missing.
+- **Structured Output**: Uses Gemini's native JSON mode for reliable and robust plan generation.
 
-The tags appear in brackets before the token pair, followed by a second line of “Signals” summarising volume, liquidity, and price move when those figures are available.
+### Commands
 
-### Subscriptions
-
-- Use `/subscribe <router> [minutes]` to store a recurring alert for the chosen router (default lookback comes from `DEFAULT_LOOKBACK_MINUTES` in `.env`).
-- `/subscriptions` echoes all active alerts for the current chat, including router addresses and polling cadence.
-- `/unsubscribe <router>` removes a single alert; `/unsubscribe_all` clears every stored router.
-- The scheduler runs every `SCHEDULER_INTERVAL_MINUTES` (defaults to 60 minutes, configurable in `.env`) and polls each subscription. New swaps trigger Dexscreener token snapshots (matching `/latest` formatting) so alerts stay focused on actionable liquidity and price signals. Override the cadence for local testing via `./scripts/start.sh --scheduler-interval-minutes 5`.
-
-### Token watchlist
-
-- `/watch <token_address> [symbol] [label]` saves a token for follow-up reports (symbol/label are optional and can be updated later).
-- `/watchlist` prints every saved token along with its address.
-- `/unwatch <token_address>` removes a single entry; `/unwatch_all` clears the watchlist.
-- Watchlisted tokens feed the scheduler so the bot can pull Base transactions, Dexscreener stats, and Honeypot verdicts for each saved contract. Each watchlist card now focuses on the Gemini-generated summary (no per-transfer bullets) and ends with a Dexscreener link so users can jump straight into the pair.
+- `/history` — View recent conversation history.
+- `/clear` — Clear conversation history and start fresh.
+- `/help` — Show available commands and capabilities.
 
 ### Prompt template
 
-Edit `prompts/planner.md` (or point `PLANNER_PROMPT_FILE` elsewhere) to tune how the Gemini planner selects tools. Use `$message`, `$network`, `$routers`, and `$default_lookback` placeholders to inject runtime context. The prompt must still instruct Gemini to output strict JSON describing the tool calls.
+Edit `prompts/planner.md` (or point `PLANNER_PROMPT_FILE` elsewhere) to tune how the Gemini planner selects tools. The `$tool_definitions` placeholder is automatically populated with the live capabilities of your connected MCP servers.
 
 ### Tests & linting
 

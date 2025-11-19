@@ -217,24 +217,27 @@ async def send_planner_response(
 
     # Build payload with conversation context
     payload: Dict[str, any] = {}
+    db_user_id = None
+    session_id = None
 
     if ctx.db and user_id:
         async with ctx.db.session() as session:
             repo = Repository(session)
             user = await repo.get_or_create_user(user_id)
+            db_user_id = user.id
             session_id = await repo.get_or_create_session(user.id)
 
             # Get token context for planner
             token_contexts = await repo.list_active_token_context(user.id)
             if token_contexts:
-                payload["cachedWatchlist"] = [
+                payload["recent_tokens"] = [
                     _serialize_token_context(row) for row in token_contexts
                 ]
 
             # Get conversation history for context
             history = await repo.get_conversation_history(user.id, limit=5)
             if history:
-                payload["conversationHistory"] = [
+                payload["conversation_history"] = [
                     {"role": msg.role, "content": msg.content} for msg in history
                 ]
 
@@ -284,17 +287,17 @@ async def send_planner_response(
         )
 
     # Save conversation to memory
-    if ctx.db and user_id:
+    if ctx.db and db_user_id:
         async with ctx.db.session() as session:
             repo = Repository(session)
 
             # Save token context from planner
             if summary_tokens:
-                await repo.save_token_context(user_id, summary_tokens)
+                await repo.save_token_context(db_user_id, summary_tokens)
 
             # Save user message
             await repo.save_conversation_message(
-                user_id=user_id,
+                user_id=db_user_id,
                 role="user",
                 content=message,
                 session_id=session_id,
@@ -302,7 +305,7 @@ async def send_planner_response(
 
             # Save assistant response
             await repo.save_conversation_message(
-                user_id=user_id,
+                user_id=db_user_id,
                 role="assistant",
                 content=response_text,
                 session_id=session_id,

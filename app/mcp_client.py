@@ -41,6 +41,12 @@ class MCPClient:
         self._lock = asyncio.Lock()
         self._pending: Dict[str, asyncio.Future[Any]] = {}
         self._initialized = False
+        self._tools: list[Dict[str, Any]] = []
+
+    @property
+    def tools(self) -> list[Dict[str, Any]]:
+        """Return the list of tools available on this server."""
+        return self._tools
 
     async def start(self) -> None:
         """Launch the MCP server process if it is not already running."""
@@ -259,15 +265,16 @@ class MCPClient:
                 ) from exc
 
             try:
-                tools = await asyncio.wait_for(
+                tools_response = await asyncio.wait_for(
                     self._send_request("tools/list", {}), timeout=10
                 )
-                if isinstance(tools, dict):
-                    names = [
-                        tool.get("name")
-                        for tool in tools.get("tools", [])
-                        if isinstance(tool, dict) and tool.get("name")
+                if isinstance(tools_response, dict):
+                    self._tools = [
+                        t
+                        for t in tools_response.get("tools", [])
+                        if isinstance(t, dict) and t.get("name")
                     ]
+                    names = [t["name"] for t in self._tools]
                     if names:
                         logger.info("mcp_tools_available", name=self.name, tools=names)
             except Exception as exc:  # pragma: no cover - non-fatal warning
@@ -452,3 +459,21 @@ class MCPManager:
         if self.honeypot:
             tasks.append(self.honeypot.stop())
         await asyncio.gather(*tasks)
+
+    def get_available_tools(self) -> list[Dict[str, Any]]:
+        """Aggregate tools from all registered MCP clients."""
+        all_tools = []
+        clients = [self.base, self.dexscreener]
+        if self.honeypot:
+            clients.append(self.honeypot)
+
+        for client in clients:
+            for tool in client.tools:
+                tool_copy = tool.copy()
+                # Namespace the tool name: 'client.method'
+                original_name = tool_copy.get("name")
+                if original_name:
+                    tool_copy["name"] = f"{client.name}.{original_name}"
+                    all_tools.append(tool_copy)
+
+        return all_tools
