@@ -44,12 +44,6 @@ class Settings(BaseSettings):
         alias="MCP_HONEYPOT_CMD",
     )
 
-    base_network: str = Field(default="base-mainnet", alias="BASE_NETWORK")
-    routers_json: Optional[Path] = Field(
-        default=None,
-        alias="ROUTERS_JSON",
-    )
-
     default_lookback_minutes: int = Field(
         default=30,
         alias="DEFAULT_LOOKBACK_MINUTES",

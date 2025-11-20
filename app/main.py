@@ -126,7 +126,7 @@ async def main() -> None:
             await application.updater.stop()
         await application.stop()
         await application.shutdown()
-        await mcp_manager.stop()
+        await mcp_manager.shutdown()
 
 
 if __name__ == "__main__":

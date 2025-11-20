@@ -50,7 +50,7 @@ def format_transaction(entry: Mapping[str, str]) -> str:
             f" — [{escape_markdown(tx_hash[:8] + '…')}]({escape_markdown(explorer)})"
         )
     else:
-        summary += f" — `{escape_markdown(tx_hash)}`"
+        summary += f" — {escape_markdown(tx_hash)}"
     return summary
 
 
