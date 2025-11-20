@@ -82,6 +82,11 @@ class GeminiPlanner:
         "searchPairs",
         "getPairByAddress",
     }
+    SYNTHESIS_MAX_RESULTS = 12
+    SYNTHESIS_MAX_CHARS = 6000
+    SYNTHESIS_MAX_STRING = 400
+    SYNTHESIS_MAX_LIST_ITEMS = 6
+    SYNTHESIS_MAX_DICT_ENTRIES = 12
 
     CLASSIFICATION_PROMPT = Template(
         textwrap.dedent(
@@ -302,18 +307,7 @@ class GeminiPlanner:
         if not results:
             return None
 
-        # Prepare results for the model (convert to JSON string)
-        # Filter out 'raw' fields to reduce prompt size
-        filtered_results = []
-        for result in results:
-            if isinstance(result, dict):
-                filtered = {k: v for k, v in result.items() if k != "raw"}
-                filtered_results.append(filtered)
-            else:
-                filtered_results.append(result)
-
-        # Using default=str to handle any non-serializable objects
-        results_text = json.dumps(filtered_results, indent=2, default=str)
+        results_text = self._prepare_results_for_synthesis(results)
 
         prompt = self.SYNTHESIS_PROMPT.safe_substitute(
             message=message, results=results_text
@@ -329,6 +323,77 @@ class GeminiPlanner:
         text = self._extract_response_text(response).strip()
         # Ensure the text is safe for Telegram MarkdownV2
         return escape_markdown(text)
+
+    def _prepare_results_for_synthesis(self, results: List[Dict[str, Any]]) -> str:
+        """Trim tool results to avoid prompt bloat before synthesis."""
+        trimmed: List[Any] = []
+        for entry in results[: self.SYNTHESIS_MAX_RESULTS]:
+            if isinstance(entry, dict):
+                safe_entry = {k: v for k, v in entry.items() if k != "raw"}
+            else:
+                safe_entry = entry
+            trimmed.append(
+                self._trim_value(
+                    safe_entry,
+                    depth=0,
+                    max_depth=3,
+                    max_list=self.SYNTHESIS_MAX_LIST_ITEMS,
+                    max_dict=self.SYNTHESIS_MAX_DICT_ENTRIES,
+                )
+            )
+
+        text = json.dumps(trimmed, indent=2, default=str)
+        if len(text) > self.SYNTHESIS_MAX_CHARS:
+            text = text[: self.SYNTHESIS_MAX_CHARS] + "\n... (truncated)"
+        return text
+
+    def _trim_value(
+        self,
+        value: Any,
+        *,
+        depth: int,
+        max_depth: int,
+        max_list: int,
+        max_dict: int,
+    ) -> Any:
+        """Recursively trim nested structures to keep prompts bounded."""
+        if isinstance(value, str):
+            if len(value) > self.SYNTHESIS_MAX_STRING:
+                return value[: self.SYNTHESIS_MAX_STRING] + "..."
+            return value
+        if value is None or isinstance(value, (int, float, bool)):
+            return value
+
+        if depth >= max_depth:
+            return "[truncated]"
+
+        if isinstance(value, list):
+            return [
+                self._trim_value(
+                    item,
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    max_list=max_list,
+                    max_dict=max_dict,
+                )
+                for item in value[:max_list]
+            ]
+
+        if isinstance(value, dict):
+            trimmed: Dict[str, Any] = {}
+            for key in list(value.keys())[:max_dict]:
+                if key == "raw":
+                    continue
+                trimmed[key] = self._trim_value(
+                    value[key],
+                    depth=depth + 1,
+                    max_depth=max_depth,
+                    max_list=max_list,
+                    max_dict=max_dict,
+                )
+            return trimmed
+
+        return value
 
     async def _plan(
         self,
@@ -444,7 +509,7 @@ class GeminiPlanner:
             return "No tools available."
 
         lines = []
-        for tool in tools:
+        for tool in tools[: self.SYNTHESIS_MAX_RESULTS]:
             name = tool.get("name")
             description = tool.get("description", "No description.")
             schema = tool.get("inputSchema", {})
@@ -452,11 +517,15 @@ class GeminiPlanner:
             required = set(schema.get("required", []))
 
             args = []
-            for prop_name, prop_def in props.items():
+            for prop_name, prop_def in list(props.items())[
+                : self.SYNTHESIS_MAX_DICT_ENTRIES
+            ]:
                 prop_type = prop_def.get("type", "any")
                 if prop_name not in required:
                     prop_name = f"{prop_name}?"
                 args.append(f"{prop_name}: {prop_type}")
+            if len(props) > self.SYNTHESIS_MAX_DICT_ENTRIES:
+                args.append("...")
 
             sig = f"- {name}({', '.join(args)})"
             lines.append(f"{sig}\n  {description}")

@@ -61,6 +61,12 @@ class MCPClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        if self.process and self.process.returncode is not None:
+            code = self.process.returncode
+            await self.stop()
+            raise RuntimeError(
+                f"MCP server {self.name} exited immediately with code {code}"
+            )
         self._tune_stream_limits()
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._log_stderr())

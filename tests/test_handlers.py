@@ -2,10 +2,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.handlers.commands import HandlerContext, send_planner_response
+from app.handlers.commands import (
+    HandlerContext,
+    ensure_user,
+    send_planner_response,
+)
 from app.planner import PlannerResult
 from app.store.db import Database
 from app.store.repository import Repository
+from telegram.error import BadRequest
 
 
 class DummyPlanner:
@@ -24,6 +29,19 @@ class DummyMessage:
 
     async def reply_text(self, text: str, **kwargs) -> None:
         self.calls.append((text, kwargs))
+
+
+class FailingMessage(DummyMessage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_once = False
+
+    async def reply_text(self, text: str, **kwargs) -> None:
+        parse_mode = kwargs.get("parse_mode")
+        if not self.failed_once and parse_mode == "MarkdownV2":
+            self.failed_once = True
+            raise BadRequest("invalid markdown")
+        await super().reply_text(text, **kwargs)
 
 
 @pytest.mark.asyncio
@@ -123,3 +141,72 @@ async def test_empty_response_uses_plain_text(tmp_path) -> None:
 
     # Verify disable_web_page_preview is set
     assert kwargs.get("disable_web_page_preview") is True
+
+
+@pytest.mark.asyncio
+async def test_markdown_fallback_on_bad_request(tmp_path) -> None:
+    """Planner reply falls back to plain text if Telegram rejects markdown."""
+    db_path = tmp_path / "bot_markdown.db"
+    db = Database(f"sqlite+aiosqlite:///{db_path}")
+    db.connect()
+    await db.init_models()
+
+    planner = DummyPlanner(message="value_with_underscore", tokens=[])
+    message_obj = FailingMessage()
+
+    update = SimpleNamespace(
+        message=message_obj,
+        effective_user=SimpleNamespace(id=999),
+        effective_chat=SimpleNamespace(id=999),
+    )
+
+    context = SimpleNamespace(
+        args=[],
+        application=SimpleNamespace(
+            bot_data={
+                "ctx": HandlerContext(
+                    db=db,
+                    planner=planner,
+                    rate_limiter=None,
+                    admin_ids=[],
+                    allowed_chat_id=None,
+                )
+            }
+        ),
+    )
+
+    await send_planner_response(update, context, "test markdown error")
+
+    # First call fails, second falls back
+    assert len(message_obj.calls) == 1
+    text, kwargs = message_obj.calls[0]
+    assert kwargs.get("parse_mode") is None
+    assert "value_with_underscore" in text
+
+
+@pytest.mark.asyncio
+async def test_ensure_user_restricts_chat() -> None:
+    """ensure_user blocks requests from unexpected chat IDs."""
+    message_obj = DummyMessage()
+    update = SimpleNamespace(
+        message=message_obj,
+        effective_chat=SimpleNamespace(id=222),
+        effective_user=SimpleNamespace(id=222),
+    )
+    context = SimpleNamespace(
+        application=SimpleNamespace(
+            bot_data={
+                "ctx": HandlerContext(
+                    db=None,
+                    planner=None,
+                    rate_limiter=None,
+                    admin_ids=[],
+                    allowed_chat_id=111,
+                )
+            }
+        )
+    )
+
+    allowed = await ensure_user(update, context)
+    assert allowed is False
+    assert message_obj.calls

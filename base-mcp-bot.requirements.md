@@ -4,7 +4,7 @@
 Create a Telegram bot that uses Gemini Generative AI to interpret natural language and call two MCP servers:
 - base-mcp-server (Blockscout wrapper for Base)
 - dexscreener-mcp (existing MCP server)
-The bot answers questions like: "Find the latest transactions on the Uniswap router and give me a Dexscreener summary of the tokens."
+The bot answers conversational requests such as "What's PEPE doing?" rather than imperative router commands.
 
 ---
 
@@ -46,12 +46,6 @@ PLANNER_PROMPT_FILE=./prompts/planner.md
 # MCP endpoints (stdio or TCP/HTTP bridge)
 MCP_BASE_SERVER_CMD="node ../base-mcp-server/dist/index.js start"
 MCP_DEXSCREENER_CMD="node /abs/path/to/mcp-servers/mcp-dexscreener/index.js"
-
-# Network selection
-BASE_NETWORK=base-mainnet
-
-# Router addresses (override defaults with JSON path if provided)
-ROUTERS_JSON=./routers.base.json
 
 # Behaviour
 DEFAULT_LOOKBACK_MINUTES=30
