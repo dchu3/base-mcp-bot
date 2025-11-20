@@ -922,6 +922,61 @@ class GeminiPlanner:
                 addresses.update(GeminiPlanner._extract_addresses_from_value(item))
         return addresses
 
+    async def _execute_single_tool(self, call: ToolInvocation) -> Dict[str, Any]:
+        """Execute a single tool call and return the result payload."""
+        try:
+            logger.info(
+                "planner_tool_call",
+                client=call.client,
+                method=call.method,
+                params=call.params,
+            )
+            if call.client == "base":
+                result = await self.mcp_manager.base.call_tool(
+                    call.method, call.params
+                )
+            elif call.client == "dexscreener":
+                result = await self.mcp_manager.dexscreener.call_tool(
+                    call.method, call.params
+                )
+            elif call.client == "honeypot":
+                if not self.mcp_manager.honeypot:
+                    raise RuntimeError("Honeypot MCP server is not configured")
+                result = await self.mcp_manager.honeypot.call_tool(
+                    call.method, call.params
+                )
+            else:  # pragma: no cover - defensive guard
+                raise RuntimeError(f"Unsupported MCP client '{call.client}'")
+
+            entry_payload: Dict[str, Any] = {"call": call, "result": result}
+            if (
+                call.client == "dexscreener"
+                and call.method in self.DEX_TOKEN_METHODS
+            ):
+                normalized_tokens = self._extract_token_entries(result)
+                if normalized_tokens:
+                    entry_payload["tokens"] = normalized_tokens
+            
+            log_extra = {"client": call.client, "method": call.method}
+            if isinstance(result, dict):
+                log_extra["result_keys"] = list(result.keys())[:5]
+                if "items" in result and isinstance(result["items"], list):
+                    log_extra["items"] = len(result["items"])
+            elif isinstance(result, list):
+                log_extra["items"] = len(result)
+            logger.info("planner_tool_success", **log_extra)
+            
+            return entry_payload
+
+        except Exception as exc:  # pragma: no cover - network/process errors
+            logger.error(
+                "planner_tool_error",
+                client=call.client,
+                method=call.method,
+                error=str(exc),
+            )
+            return {"call": call, "error": str(exc)}
+
     async def _execute_plan(
         self,
         plan: Sequence[ToolInvocation],
@@ -933,99 +988,63 @@ class GeminiPlanner:
         chain_id = self._derive_chain_id(context.get("network"))
         # chain_numeric removed - was only used for auto-honeypot checks
 
-        for call in plan:
-            try:
-                logger.info(
-                    "planner_tool_call",
-                    client=call.client,
-                    method=call.method,
-                    params=call.params,
-                )
-                if call.client == "base":
-                    result = await self.mcp_manager.base.call_tool(
-                        call.method, call.params
-                    )
-                elif call.client == "dexscreener":
-                    result = await self.mcp_manager.dexscreener.call_tool(
-                        call.method, call.params
-                    )
-                elif call.client == "honeypot":
-                    if not self.mcp_manager.honeypot:
-                        raise RuntimeError("Honeypot MCP server is not configured")
-                    result = await self.mcp_manager.honeypot.call_tool(
-                        call.method, call.params
-                    )
-                else:  # pragma: no cover - defensive guard
-                    raise RuntimeError(f"Unsupported MCP client '{call.client}'")
+        # 1. Execute initial plan in parallel
+        tasks = [self._execute_single_tool(call) for call in plan]
+        initial_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Convert exceptions to error dicts and extend results
+        results.extend([
+            {"call": call, "error": f"Unexpected exception: {str(r)}"} 
+            if isinstance(r, Exception) else r 
+            for call, r in zip(plan, initial_results)
+        ])
 
-                entry_payload: Dict[str, Any] = {"call": call, "result": result}
-                if (
-                    call.client == "dexscreener"
-                    and call.method in self.DEX_TOKEN_METHODS
-                ):
-                    normalized_tokens = self._extract_token_entries(result)
-                    if normalized_tokens:
-                        entry_payload["tokens"] = normalized_tokens
-                results.append(entry_payload)
-                log_extra = {"client": call.client, "method": call.method}
-                if isinstance(result, dict):
-                    log_extra["result_keys"] = list(result.keys())[:5]
-                    if "items" in result and isinstance(result["items"], list):
-                        log_extra["items"] = len(result["items"])
-                elif isinstance(result, list):
-                    log_extra["items"] = len(result)
-                logger.info("planner_tool_success", **log_extra)
+        # 2. Process results for side effects (token collection)
+        for entry in initial_results:
+            if isinstance(entry, Exception):
+                logger.error("planner_gather_exception", error=str(entry))
+                continue
 
-                if call.client == "dexscreener":
-                    token_addr = self._extract_token_param(call.params)
-                    if token_addr:
-                        planned_token_keys.add(token_addr.lower())
+            if "error" in entry:
+                continue
+            
+            call = entry["call"]
+            result = entry["result"]
 
-                if call.client == "base" and call.method == "getDexRouterActivity":
-                    transactions = self._iter_transactions(result)
-                    for token in self._collect_token_addresses(transactions):
-                        collected_tokens.setdefault(token.lower(), token)
-            except Exception as exc:  # pragma: no cover - network/process errors
-                logger.error(
-                    "planner_tool_error",
-                    client=call.client,
-                    method=call.method,
-                    error=str(exc),
-                )
-                results.append({"call": call, "error": str(exc)})
+            if call.client == "dexscreener":
+                token_addr = self._extract_token_param(call.params)
+                if token_addr:
+                    planned_token_keys.add(token_addr.lower())
 
+            if call.client == "base" and call.method == "getDexRouterActivity":
+                transactions = self._iter_transactions(result)
+                for token in self._collect_token_addresses(transactions):
+                    collected_tokens.setdefault(token.lower(), token)
+
+        # 3. Identify additional tokens to fetch
         additional_tokens = [
             address
             for key, address in collected_tokens.items()
             if key not in planned_token_keys
         ][:3]
 
-        for token in additional_tokens:
-            invocation = ToolInvocation(
-                client="dexscreener",
-                method="getPairsByToken",
-                params={"chainId": chain_id, "tokenAddress": token},
-            )
-            try:
-                dex_result = await self.mcp_manager.dexscreener.call_tool(
-                    invocation.method,
-                    invocation.params,
+        # 4. Fetch additional tokens in parallel
+        if additional_tokens:
+            additional_tasks = []
+            for token in additional_tokens:
+                invocation = ToolInvocation(
+                    client="dexscreener",
+                    method="getPairsByToken",
+                    params={"chainId": chain_id, "tokenAddress": token},
                 )
-                entry_payload: Dict[str, Any] = {
-                    "call": invocation,
-                    "result": dex_result,
-                }
-                normalized_tokens = self._extract_token_entries(dex_result)
-                if normalized_tokens:
-                    entry_payload["tokens"] = normalized_tokens
-                results.append(entry_payload)
-            except Exception as exc:  # pragma: no cover - network/process errors
-                logger.error(
-                    "planner_token_summary_error",
-                    token=token,
-                    error=str(exc),
-                )
-                results.append({"call": invocation, "error": str(exc)})
+                additional_tasks.append(self._execute_single_tool(invocation))
+            
+            additional_results = await asyncio.gather(*additional_tasks, return_exceptions=True)
+            for r in additional_results:
+                if isinstance(r, Exception):
+                    logger.error("planner_additional_token_exception", error=str(r))
+                else:
+                    results.append(r)
 
         # Disabled: Auto-honeypot checks were blocking results when API returns 404
         # Only run honeypot when explicitly requested via planner tool call
