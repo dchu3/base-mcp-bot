@@ -59,25 +59,17 @@ async def execute_parallel_tools(tool_calls, mcp_session):
         tasks.append(task)
     
     # 2. Run all tasks simultaneously
-    # return_exceptions=True ensures one failure doesn't crash the whole batch
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Note: execute_single_tool handles exceptions internally, so we don't need return_exceptions=True
+    results = await asyncio.gather(*tasks)
     
     # 3. Process results for the LLM
     final_responses = []
     for call, result in zip(tool_calls, results):
-        if isinstance(result, Exception):
-            # Log the error locally
-            print(f"Error executing {call.name}: {result}")
-            # Return a graceful error to the LLM so it can decide what to do
-            func_response = {
-                "name": call.name,
-                "response": {"error": f"Tool execution failed: {str(result)}"}
-            }
-        else:
-            func_response = {
-                "name": call.name,
-                "response": result
-            }
+        # Result is already a dict, possibly containing an "error" key
+        func_response = {
+            "name": call.name,
+            "response": result
+        }
         final_responses.append(func_response)
         
     return final_responses
@@ -86,8 +78,11 @@ async def execute_single_tool(session, call):
     """
     Helper wrapper to standardize tool calling.
     """
-    tool_name = call.name
-    tool_args = call.args
-    # Your existing logic to call the MCP server goes here:
-    return await session.call_tool(tool_name, tool_args)
+    try:
+        tool_name = call.name
+        tool_args = call.args
+        # Your existing logic to call the MCP server goes here:
+        return await session.call_tool(tool_name, tool_args)
+    except Exception as exc:
+        return {"error": str(exc)}
 ```
