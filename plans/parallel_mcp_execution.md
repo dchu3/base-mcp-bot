@@ -66,9 +66,9 @@ async def execute_parallel_tools(tool_calls, mcp_session):
     final_responses = []
     for call, result in zip(tool_calls, results):
         if isinstance(result, Exception):
-             # Log unexpected task failure
-             print(f"Task failed for {call.name}: {result}")
-             func_response = {
+            # Log unexpected task failure
+            print(f"Task failed for {call.name}: {result}")
+            func_response = {
                 "name": call.name,
                 "response": {"error": f"Task execution failed: {str(result)}"}
             }

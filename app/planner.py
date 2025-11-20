@@ -991,7 +991,13 @@ class GeminiPlanner:
         # 1. Execute initial plan in parallel
         tasks = [self._execute_single_tool(call) for call in plan]
         initial_results = await asyncio.gather(*tasks, return_exceptions=True)
-        results.extend(initial_results)
+        
+        # Convert exceptions to error dicts and extend results
+        results.extend([
+            {"call": call, "error": f"Unexpected exception: {str(r)}"} 
+            if isinstance(r, Exception) else r 
+            for call, r in zip(plan, initial_results)
+        ])
 
         # 2. Process results for side effects (token collection)
         for entry in initial_results:
@@ -1034,7 +1040,11 @@ class GeminiPlanner:
                 additional_tasks.append(self._execute_single_tool(invocation))
             
             additional_results = await asyncio.gather(*additional_tasks, return_exceptions=True)
-            results.extend([r for r in additional_results if not isinstance(r, Exception)])
+            for r in additional_results:
+                if isinstance(r, Exception):
+                    logger.error("planner_additional_token_exception", error=str(r))
+                else:
+                    results.append(r)
 
         # Disabled: Auto-honeypot checks were blocking results when API returns 404
         # Only run honeypot when explicitly requested via planner tool call
