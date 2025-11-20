@@ -1,7 +1,7 @@
 # Implementation Plan: Parallel MCP Tool Execution
 
 ## Context
-**Goal:** optimize the Telegram bot's latency by executing independent MCP tool calls in parallel rather than sequentially.
+**Goal:** Optimize the Telegram bot's latency by executing independent MCP tool calls in parallel rather than sequentially.
 **Current State:** The bot calls Tool A, waits for the result, then calls Tool B.
 **Target State:** The bot fires Tool A and Tool B simultaneously using `asyncio.gather`.
 
