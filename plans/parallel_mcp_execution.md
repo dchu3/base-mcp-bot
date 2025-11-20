@@ -22,7 +22,7 @@ Add the following directive to the system prompt to ensure Gemini understands it
 
 ## Step 2: Refactor Tool Execution Logic
 
-**Target File:** `app/bot.py` (or the file containing the main `chat_loop` and `process_tool_calls`)
+**Target File:** `app/planner.py` (or the file containing the main `chat_loop` and `process_tool_calls`)
 
 **Instruction:**
 Locate the loop that iterates through the model's function calls. Refactor it to use `asyncio.gather`.
@@ -30,7 +30,7 @@ Locate the loop that iterates through the model's function calls. Refactor it to
 ### Logic Requirements:
 
 1.  **Collect Tasks:** Instead of `await`ing inside the loop, create a list of coroutines (tasks).
-2.  **Execute Concurrently:** Use `asyncio.gather(*tasks, return_exceptions=True)` to run them all at once.
+2.  **Execute Concurrently:** Use `asyncio.gather(*tasks, return_exceptions=True)` to run them all at once. This provides a defensive layer against unexpected crashes, even if the tool wrapper handles most exceptions.
 3.  **Error Isolation:** If one tool fails (e.g., Dexscreener times out), it must **not** crash the other tools (e.g., Honeypot). The bot should still report the successful data.
 4.  **Map Results:** Ensure the results are mapped back to the correct tool call ID so Gemini knows which result belongs to which request.
 
@@ -59,17 +59,25 @@ async def execute_parallel_tools(tool_calls, mcp_session):
         tasks.append(task)
     
     # 2. Run all tasks simultaneously
-    # Note: execute_single_tool handles exceptions internally, so we don't need return_exceptions=True
-    results = await asyncio.gather(*tasks)
+    # return_exceptions=True ensures one failure doesn't crash the whole batch (defensive layer)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # 3. Process results for the LLM
     final_responses = []
     for call, result in zip(tool_calls, results):
-        # Result is already a dict, possibly containing an "error" key
-        func_response = {
-            "name": call.name,
-            "response": result
-        }
+        if isinstance(result, Exception):
+             # Log unexpected task failure
+             print(f"Task failed for {call.name}: {result}")
+             func_response = {
+                "name": call.name,
+                "response": {"error": f"Task execution failed: {str(result)}"}
+            }
+        else:
+            # Result is already a dict, possibly containing an "error" key from execute_single_tool
+            func_response = {
+                "name": call.name,
+                "response": result
+            }
         final_responses.append(func_response)
         
     return final_responses
