@@ -54,10 +54,26 @@ class Repository:
         now = datetime.utcnow()
         expires = now + timedelta(minutes=TOKEN_CONTEXT_TTL_MINUTES)
 
-        for entry in tokens:
-            address = entry.get("address")
-            if not address or not isinstance(address, str):
-                continue
+        # Deduplicate input tokens by address
+        tokens_by_addr = {}
+        for t in tokens:
+            addr = t.get("address")
+            if addr and isinstance(addr, str):
+                tokens_by_addr[addr] = t
+
+        if not tokens_by_addr:
+            return
+
+        # Batch fetch existing
+        stmt = select(TokenContext).where(
+            TokenContext.user_id == user_id,
+            TokenContext.token_address.in_(tokens_by_addr.keys()),
+        )
+        result = await self.session.execute(stmt)
+        existing_records = {r.token_address: r for r in result.scalars().all()}
+
+        for address, entry in tokens_by_addr.items():
+            existing = existing_records.get(address)
 
             symbol = entry.get("symbol") or ""
             source = entry.get("source")
@@ -66,14 +82,6 @@ class Repository:
             pair_address = entry.get("pairAddress")
             url = entry.get("url")
             chain_id = entry.get("chainId")
-
-            existing_result = await self.session.execute(
-                select(TokenContext).where(
-                    TokenContext.user_id == user_id,
-                    TokenContext.token_address == address,
-                )
-            )
-            existing = existing_result.scalar_one_or_none()
 
             if existing:
                 existing.symbol = symbol
