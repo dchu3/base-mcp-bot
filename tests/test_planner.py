@@ -443,7 +443,6 @@ def test_normalize_resolve_token_with_address_key() -> None:
 async def test_handle_chitchat_escapes_markdown() -> None:
     planner = _make_planner()
     planner.model = MagicMock()
-    
     # Mock the Gemini response
     mock_response = MagicMock()
     mock_candidate = MagicMock()
