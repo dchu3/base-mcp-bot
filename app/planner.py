@@ -78,9 +78,7 @@ class GeminiPlanner:
     HONEYPOT_NOT_FOUND_TTL_SECONDS = 600
     DEX_TOKEN_METHODS = {
         "getPairsByToken",
-        "getTokenOverview",
         "searchPairs",
-        "getPairByAddress",
         "getPairByChainAndAddress",
         "getTokenPools",
         "getLatestBoostedTokens",
@@ -897,6 +895,42 @@ class GeminiPlanner:
             normalized.pop("lookbackMinutes", None)
             normalized.pop("since_minutes", None)
             normalized.pop("minutes", None)
+
+        if client == "dexscreener":
+            if "chainId" not in normalized:
+                normalized["chainId"] = str(network or "base")
+
+            # Methods expecting tokenAddress
+            if method in {
+                "getPairsByToken",
+                "getTokenPools",
+                "checkTokenOrders",
+            }:
+                addr = (
+                    normalized.get("tokenAddress")
+                    or normalized.get("address")
+                    or normalized.get("token")
+                    or normalized.get("query")
+                )
+                if addr:
+                    normalized["tokenAddress"] = addr
+                    normalized.pop("address", None)
+                    normalized.pop("token", None)
+                    normalized.pop("query", None)
+
+            # Methods expecting pairAddress
+            if method == "getPairByChainAndAddress":
+                pair_addr = (
+                    normalized.get("pairAddress")
+                    or normalized.get("address")
+                    or normalized.get("pair")
+                    or normalized.get("query")
+                )
+                if pair_addr:
+                    normalized["pairAddress"] = pair_addr
+                    normalized.pop("address", None)
+                    normalized.pop("pair", None)
+                    normalized.pop("query", None)
 
         # Validate honeypot check has proper address
         if client == "honeypot" and method == "check_token":
