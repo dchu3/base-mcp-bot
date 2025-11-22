@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.planner import GeminiPlanner, ToolInvocation, PlannerResult
+from app.planner import GeminiPlanner, ToolInvocation
 
 
 def _make_planner() -> GeminiPlanner:
@@ -424,17 +424,20 @@ def test_normalize_resolve_token_valid() -> None:
     normalized = planner._normalize_params("base", "resolveToken", params)
     assert normalized == {"address": "0x1234567890123456789012345678901234567890"}
 
+
 def test_normalize_resolve_token_invalid() -> None:
     planner = _make_planner()
     params = {"query": "CHARLIE"}
     normalized = planner._normalize_params("base", "resolveToken", params)
     assert normalized == {}
 
+
 def test_normalize_resolve_token_with_address_key() -> None:
     planner = _make_planner()
     params = {"address": "0x1234567890123456789012345678901234567890"}
     normalized = planner._normalize_params("base", "resolveToken", params)
     assert normalized == {"address": "0x1234567890123456789012345678901234567890"}
+
 
 @pytest.mark.asyncio
 async def test_handle_chitchat_escapes_markdown() -> None:
