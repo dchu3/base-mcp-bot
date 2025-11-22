@@ -86,6 +86,13 @@ def test_extract_token_entries_handles_list() -> None:
     assert entries[0]["symbol"] == "AAA/BBB"
 
 
+def test_allows_empty_params_for_paramless_dex_tools() -> None:
+    planner = _make_planner()
+    assert planner._allows_empty_params("dexscreener", "getLatestBoostedTokens")
+    assert planner._allows_empty_params("dexscreener", "getMostActiveBoostedTokens")
+    assert not planner._allows_empty_params("dexscreener", "searchPairs")
+
+
 def test_format_recent_tokens_outputs_json() -> None:
     planner = _make_planner()
     tokens = [
@@ -247,6 +254,39 @@ async def test_summarize_transactions_returns_token_summary() -> None:
     assert "AAA/BBB" in summary.message
     assert summary.tokens
     assert fake_dex.calls
+
+
+@pytest.mark.asyncio
+async def test_execute_single_tool_attaches_tokens_for_paramless_calls() -> None:
+    planner = _make_planner()
+
+    class FakeDex:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def call_tool(self, method: str, params: dict) -> dict:
+            self.calls.append((method, params))
+            return {
+                "pairs": [
+                    {
+                        "pairAddress": "0xpair",
+                        "baseToken": {"symbol": "AAA"},
+                        "quoteToken": {"symbol": "BBB"},
+                        "priceUsd": "1.00",
+                    }
+                ]
+            }
+
+    planner.mcp_manager = SimpleNamespace(dexscreener=FakeDex())
+
+    call = ToolInvocation(
+        client="dexscreener", method="getLatestBoostedTokens", params={}
+    )
+
+    result = await planner._execute_single_tool(call)
+
+    assert "tokens" in result
+    assert result["tokens"][0]["symbol"] == "AAA/BBB"
 
 
 def test_format_prior_results() -> None:
