@@ -47,7 +47,7 @@ Edit `prompts/planner.md` (or point `PLANNER_PROMPT_FILE` elsewhere) to tune how
 ### Tests & linting
 
 ```bash
-pytest
+.venv/bin/pytest
 ruff check
 black --check .
 ```
