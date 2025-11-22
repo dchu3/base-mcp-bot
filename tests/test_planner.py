@@ -254,7 +254,7 @@ async def test_summarize_transactions_returns_token_summary() -> None:
     assert "AAA/BBB" in summary.message
     assert summary.tokens
     assert fake_dex.calls
-    
+
 
 @pytest.mark.asyncio
 async def test_execute_single_tool_attaches_tokens_for_paramless_calls() -> None:
