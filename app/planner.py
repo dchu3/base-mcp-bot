@@ -81,6 +81,16 @@ class GeminiPlanner:
         "getTokenOverview",
         "searchPairs",
         "getPairByAddress",
+        "getPairByChainAndAddress",
+        "getTokenPools",
+        "getLatestBoostedTokens",
+        "getMostActiveBoostedTokens",
+        "getLatestTokenProfiles",
+    }
+    PARAMLESS_METHODS = {
+        ("dexscreener", "getLatestBoostedTokens"),
+        ("dexscreener", "getMostActiveBoostedTokens"),
+        ("dexscreener", "getLatestTokenProfiles"),
     }
     SYNTHESIS_MAX_RESULTS = 12
     SYNTHESIS_MAX_CHARS = 6000
@@ -441,7 +451,8 @@ class GeminiPlanner:
                 continue
 
             # Skip if normalize_params returned empty dict (invalid params)
-            if not params:
+            allow_empty = self._allows_empty_params(client, method)
+            if not params and not allow_empty:
                 logger.warning(
                     "planner_skipping_invalid_tool",
                     client=client,
@@ -710,7 +721,8 @@ class GeminiPlanner:
                 continue
 
             # Skip if normalize_params returned empty dict (invalid params)
-            if not params:
+            allow_empty = self._allows_empty_params(client, method)
+            if not params and not allow_empty:
                 logger.warning(
                     "planner_refinement_skipping_invalid_tool",
                     client=client,
@@ -782,6 +794,9 @@ class GeminiPlanner:
             Available tools:
             - dexscreener.searchPairs
             - dexscreener.getPairsByToken (requires tokenAddress)
+            - dexscreener.getLatestBoostedTokens (no params)
+            - dexscreener.getMostActiveBoostedTokens (no params)
+            - dexscreener.getLatestTokenProfiles (no params)
             - honeypot.check_token (requires address: "0x..." and chainId: 8453)
             - base.resolveToken
             - base.getTransactionByHash
@@ -800,6 +815,13 @@ class GeminiPlanner:
             Respond with JSON only.
         """
         ).strip()
+
+    @classmethod
+    def _allows_empty_params(cls, client: str | None, method: str | None) -> bool:
+        """Return True if the tool intentionally accepts no parameters."""
+        if not client or not method:
+            return False
+        return (client, method) in cls.PARAMLESS_METHODS
 
     def _normalize_params(
         self,

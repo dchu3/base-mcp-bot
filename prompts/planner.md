@@ -63,6 +63,7 @@ Reasoning: User wants details on second token from previous response.
 - Always use Base chain ID: 8453 for honeypot checks
 - Search by symbol/name first, then use addresses for detailed queries
 - Include honeypot check for any token the user might trade
+- For trending/boosted requests, use Dexscreener's zero-parameter tools: `dexscreener.getLatestBoostedTokens`, `dexscreener.getMostActiveBoostedTokens`, or `dexscreener.getLatestTokenProfiles`
 - If you require data from multiple independent sources, generate all necessary tool calls in the same turn (parallel execution).
 - If you don't have enough info, ask for clarification (set confidence < 0.7)
 - Don't make assumptions - if unsure about a token reference, ask
