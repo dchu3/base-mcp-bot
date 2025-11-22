@@ -80,17 +80,20 @@ class MCPClient:
 
         target_limit = 1_048_576  # 1 MiB per line is plenty for MCP JSON payloads.
 
-        stdout = getattr(process, "stdout", None)
-        if stdout is not None and hasattr(stdout, "_limit"):
-            current = getattr(stdout, "_limit", 0) or 0
-            if current < target_limit:
-                setattr(stdout, "_limit", target_limit)
+        try:
+            stdout = getattr(process, "stdout", None)
+            if stdout is not None and hasattr(stdout, "_limit"):
+                current = getattr(stdout, "_limit", 0) or 0
+                if current < target_limit:
+                    setattr(stdout, "_limit", target_limit)
 
-        stderr = getattr(process, "stderr", None)
-        if stderr is not None and hasattr(stderr, "_limit"):
-            current = getattr(stderr, "_limit", 0) or 0
-            if current < target_limit:
-                setattr(stderr, "_limit", target_limit)
+            stderr = getattr(process, "stderr", None)
+            if stderr is not None and hasattr(stderr, "_limit"):
+                current = getattr(stderr, "_limit", 0) or 0
+                if current < target_limit:
+                    setattr(stderr, "_limit", target_limit)
+        except Exception as exc:
+            logger.warning("mcp_stream_limit_tune_failed", error=str(exc))
 
     async def stop(self) -> None:
         """Terminate the process gracefully."""

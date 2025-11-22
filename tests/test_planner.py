@@ -1,10 +1,11 @@
 import json
 import time
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
-from app.planner import GeminiPlanner, ToolInvocation
+from app.planner import GeminiPlanner, ToolInvocation, PlannerResult
 
 
 def _make_planner() -> GeminiPlanner:
@@ -415,3 +416,47 @@ def test_build_refinement_prompt() -> None:
     assert "additional tools" in prompt
     assert '{"tools": []}' in prompt
     assert "Respond with JSON only" in prompt
+
+
+def test_normalize_resolve_token_valid() -> None:
+    planner = _make_planner()
+    params = {"query": "0x1234567890123456789012345678901234567890"}
+    normalized = planner._normalize_params("base", "resolveToken", params)
+    assert normalized == {"address": "0x1234567890123456789012345678901234567890"}
+
+def test_normalize_resolve_token_invalid() -> None:
+    planner = _make_planner()
+    params = {"query": "CHARLIE"}
+    normalized = planner._normalize_params("base", "resolveToken", params)
+    assert normalized == {}
+
+def test_normalize_resolve_token_with_address_key() -> None:
+    planner = _make_planner()
+    params = {"address": "0x1234567890123456789012345678901234567890"}
+    normalized = planner._normalize_params("base", "resolveToken", params)
+    assert normalized == {"address": "0x1234567890123456789012345678901234567890"}
+
+@pytest.mark.asyncio
+async def test_handle_chitchat_escapes_markdown() -> None:
+    planner = _make_planner()
+    planner.model = MagicMock()
+    
+    # Mock the Gemini response
+    mock_response = MagicMock()
+    mock_candidate = MagicMock()
+    mock_part = MagicMock()
+    mock_part.text = "Hello! I can help you with tokens."
+    mock_candidate.content.parts = [mock_part]
+    mock_response.candidates = [mock_candidate]
+    
+    # Mock generate_content to return the mock response
+    planner.model.generate_content.return_value = mock_response
+    
+    context = {"conversation_history": []}
+    result = await planner._handle_chitchat("Hi", context)
+    
+    # The text "Hello! I can help you with tokens." contains '!', which is reserved in MarkdownV2
+    # It should be escaped to "Hello\! I can help you with tokens\."
+    
+    assert "\\" in result.message
+    assert result.message == "Hello\\! I can help you with tokens\\."

@@ -302,7 +302,7 @@ class GeminiPlanner:
                 [{"role": "user", "parts": [{"text": prompt}]}],
             )
             text = self._extract_response_text(response)
-            return PlannerResult(message=text, tokens=[])
+            return PlannerResult(message=escape_markdown(text), tokens=[])
         except Exception as exc:
             logger.error("chitchat_generation_failed", error=str(exc))
             return PlannerResult(
@@ -835,6 +835,18 @@ class GeminiPlanner:
             return {}
 
         normalized = dict(params)
+
+        if client == "base" and method == "resolveToken":
+            addr = (
+                normalized.get("address")
+                or normalized.get("query")
+                or normalized.get("token")
+                or normalized.get("symbol")
+            )
+            if isinstance(addr, str) and addr.startswith("0x"):
+                return {"address": addr}
+            # Invalid address for resolveToken -> suppress call
+            return {}
 
         if client == "base" and method == "getDexRouterActivity":
             original_router_value = normalized.get("router")

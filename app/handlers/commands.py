@@ -6,7 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Dict, List
 
-from telegram import Update
+from telegram import Update, constants
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -199,6 +199,12 @@ async def natural_language_handler(update: Update, context: CallbackContext) -> 
         return
     if not rate_limit(update, context):
         return
+
+    if update.effective_chat:
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, action=constants.ChatAction.TYPING
+        )
+
     message = update.message.text
     await send_planner_response(update, context, message)
 
