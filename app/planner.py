@@ -898,7 +898,7 @@ class GeminiPlanner:
 
         if client == "dexscreener":
             if "chainId" not in normalized:
-                normalized["chainId"] = str(context.get("network", "base"))
+                normalized["chainId"] = str(network or "base")
 
             # Methods expecting tokenAddress
             if method in {
@@ -914,6 +914,9 @@ class GeminiPlanner:
                 )
                 if addr:
                     normalized["tokenAddress"] = addr
+                    normalized.pop("address", None)
+                    normalized.pop("token", None)
+                    normalized.pop("query", None)
 
             # Methods expecting pairAddress
             if method == "getPairByChainAndAddress":
@@ -925,6 +928,9 @@ class GeminiPlanner:
                 )
                 if pair_addr:
                     normalized["pairAddress"] = pair_addr
+                    normalized.pop("address", None)
+                    normalized.pop("pair", None)
+                    normalized.pop("query", None)
 
         # Validate honeypot check has proper address
         if client == "honeypot" and method == "check_token":
