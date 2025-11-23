@@ -32,6 +32,10 @@ DEFAULT_ROUTERS: Dict[str, Dict[str, str]] = {
         "base-mainnet": "0x1b81D678ffb9C0263b24A97847620C99d213eB14",
         "base-sepolia": "0x0000000000000000000000000000000000000000",
     },
+    "sushiswap_v2": {
+        "base-mainnet": "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24",
+        "base-sepolia": "0x0000000000000000000000000000000000000000",
+    },
 }
 
 

@@ -20,6 +20,7 @@ from app.store.repository import Repository
 from app.utils.logging import configure_logging, get_logger
 from app.utils.rate_limit import RateLimiter
 from app.utils.prompts import load_prompt_template
+from app.utils.routers import load_router_map
 
 logger = get_logger(__name__)
 
@@ -63,12 +64,15 @@ async def main() -> None:
     )
     await mcp_manager.start()
 
+    router_map = load_router_map()
+    router_keys = list(router_map.keys())
+
     prompt_template = load_prompt_template(settings.planner_prompt_file)
     planner = GeminiPlanner(
         api_key=settings.gemini_api_key,
         mcp_manager=mcp_manager,
-        router_keys=[],  # No router subscriptions in conversational mode
-        router_map={},  # No router subscriptions in conversational mode
+        router_keys=router_keys,
+        router_map=router_map,
         model_name=settings.gemini_model,
         prompt_template=prompt_template,
         confidence_threshold=settings.planner_confidence_threshold,
