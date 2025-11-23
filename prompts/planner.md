@@ -63,7 +63,7 @@ Reasoning: User wants details on second token from previous response.
 → {"tools": [{"client": "dexscreener", "method": "getPairsByToken", "params": {"chainId": "base", "tokenAddress": "ADDRESS_FROM_HISTORY"}}]}
 
 ### Example 6: Router Activity
-User: "Show me latest uniswap v2 transactions"
+User: "Show me latest Uniswap v2 transactions"
 Reasoning: User wants router activity. "uniswap_v2" is in the available routers list.
 → {"tools": [{"client": "base", "method": "getDexRouterActivity", "params": {"router": "uniswap_v2", "sinceMinutes": 30}}]}
 

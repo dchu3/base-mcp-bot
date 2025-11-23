@@ -247,7 +247,8 @@ class GeminiPlanner:
 
         # Skip synthesis for router activity to preserve formatted transaction lists
         skip_synthesis = any(
-            getattr(entry.get("call"), "method", "") == "getDexRouterActivity"
+            entry.get("call")
+            and getattr(entry["call"], "method", None) == "getDexRouterActivity"
             for entry in all_results
         )
 
@@ -828,6 +829,17 @@ class GeminiPlanner:
             return False
         return (client, method) in cls.PARAMLESS_METHODS
 
+    def _fuzzy_match_router_key(self, key: str) -> str | None:
+        """Resolve a router key using exact or fuzzy matching."""
+        if not key:
+            return None
+        # Try exact match
+        if key in self.router_map:
+            return key
+        # Try fuzzy match (lowercase, spaces -> underscores)
+        fuzzy = key.lower().replace(" ", "_")
+        return fuzzy if fuzzy in self.router_map else None
+
     def _normalize_params(
         self,
         client: str | None,
@@ -887,37 +899,25 @@ class GeminiPlanner:
             if isinstance(router_value, str) and not router_value.startswith("0x"):
                 normalized.setdefault("routerKey", router_value)
                 # Try to resolve
-                if network_str:
-                    # Try exact match
-                    if router_value in self.router_map:
-                        target_key = router_value
-                    else:
-                        # Try fuzzy match (lowercase, spaces -> underscores)
-                        fuzzy_key = router_value.lower().replace(" ", "_")
-                        target_key = fuzzy_key if fuzzy_key in self.router_map else None
+                target_key = self._fuzzy_match_router_key(router_value)
 
-                    if target_key:
-                        network_map = self.router_map.get(target_key, {})
-                        address = network_map.get(network_str)
-                        if address:
-                            normalized["router"] = address
-                            normalized["routerKey"] = target_key  # Normalize the key too
+                if target_key:
+                    network_map = self.router_map.get(target_key, {})
+                    address = network_map.get(network_str)
+                    if address:
+                        normalized["router"] = address
+                        normalized["routerKey"] = target_key  # Normalize the key too
             
             # Case 2: router_value is None, but we have a label/key that might resolve
             elif router_value is None and router_label:
-                 if network_str:
-                    if router_label in self.router_map:
-                        target_key = router_label
-                    else:
-                        fuzzy_key = router_label.lower().replace(" ", "_")
-                        target_key = fuzzy_key if fuzzy_key in self.router_map else None
+                target_key = self._fuzzy_match_router_key(router_label)
 
-                    if target_key:
-                        network_map = self.router_map.get(target_key, {})
-                        address = network_map.get(network_str)
-                        if address:
-                            normalized["router"] = address
-                            normalized["routerKey"] = target_key
+                if target_key:
+                    network_map = self.router_map.get(target_key, {})
+                    address = network_map.get(network_str)
+                    if address:
+                        normalized["router"] = address
+                        normalized["routerKey"] = target_key
 
             normalized.pop("network", None)
             if "sinceMinutes" not in normalized:
@@ -1201,7 +1201,7 @@ class GeminiPlanner:
             address
             for key, address in collected_tokens.items()
             if key not in planned_token_keys
-        ][:6]
+        ][:self.MAX_HONEYPOT_CHECKS]
 
         # 4. Fetch additional tokens in parallel
         if additional_tokens:
@@ -1592,7 +1592,15 @@ class GeminiPlanner:
                     addr = t.get("address")
                     symbol = t.get("symbol")
                     if addr and symbol:
-                        token_map[addr.lower()] = symbol
+                        key = addr.lower()
+                        if key not in token_map:
+                            token_map[key] = symbol
+                        else:
+                            if token_map[key] != symbol:
+                                logger.warning(
+                                    f"Duplicate token address {key} with conflicting symbols: "
+                                    f"'{token_map[key]}' (existing) vs '{symbol}' (new). Using the first occurrence."
+                                )
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -1915,16 +1923,27 @@ class GeminiPlanner:
         # Enrich method with token symbols if available
         if token_map and isinstance(decoded, dict) and "params" in decoded:
             path = []
-            for param in decoded.get("params", []):
-                if param.get("name") == "path" and isinstance(param.get("value"), list):
-                    path = param["value"]
-                    break
+            path_candidates = [
+                param.get("value")
+                for param in decoded.get("params", [])
+                if param.get("name") == "path" and isinstance(param.get("value"), list)
+            ]
+            if len(path_candidates) == 1:
+                path = path_candidates[0]
+            elif len(path_candidates) > 1:
+                logger.warning("Multiple 'path' parameters found in decoded params; using the first one.")
+                path = path_candidates[0]
+            else:
+                path = []
+
             if path:
                 # Try to resolve symbols
                 symbols = []
                 for addr in path:
                     if isinstance(addr, str):
-                        symbols.append(token_map.get(addr.lower(), addr[:6]))
+                        # Safe fallback for short/malformed addresses
+                        fallback = addr[:6] if len(addr) >= 6 else addr
+                        symbols.append(token_map.get(addr.lower(), fallback))
                 if len(symbols) >= 2:
                     # Use arrow character \u279C
                     method = f"Swap {symbols[0]} \u279C {symbols[-1]}"
