@@ -865,7 +865,11 @@ class GeminiPlanner:
                 normalized["router"] = router_override
 
             router_value = normalized.get("router")
-            network_str = str(network) if network else None
+            
+            # Normalize network for lookup: default 'base' -> 'base-mainnet'
+            network_str = str(network) if network else "base-mainnet"
+            if network_str == "base":
+                network_str = "base-mainnet"
 
             # If we have a label, store it for context
             if router_label and isinstance(router_label, str):
