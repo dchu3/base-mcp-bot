@@ -245,18 +245,26 @@ class GeminiPlanner:
         # Generate deterministic result for context extraction and fallback
         deterministic_result = self._render_response(message, context, all_results)
 
-        # Attempt conversational synthesis
-        try:
-            synthesized_text = await self._synthesize_response(message, all_results)
-            if synthesized_text:
-                # Re-attach NFA disclaimer if tokens are present
-                if deterministic_result.tokens:
-                    synthesized_text = append_not_financial_advice(synthesized_text)
-                return PlannerResult(
-                    message=synthesized_text, tokens=deterministic_result.tokens
-                )
-        except Exception as exc:
-            logger.error("planner_synthesis_failed", error=str(exc))
+        # Skip synthesis for router activity to preserve formatted transaction lists
+        skip_synthesis = any(
+            entry.get("call")
+            and getattr(entry["call"], "method", None) == "getDexRouterActivity"
+            for entry in all_results
+        )
+
+        if not skip_synthesis:
+            # Attempt conversational synthesis
+            try:
+                synthesized_text = await self._synthesize_response(message, all_results)
+                if synthesized_text:
+                    # Re-attach NFA disclaimer if tokens are present
+                    if deterministic_result.tokens:
+                        synthesized_text = append_not_financial_advice(synthesized_text)
+                    return PlannerResult(
+                        message=synthesized_text, tokens=deterministic_result.tokens
+                    )
+            except Exception as exc:
+                logger.error("planner_synthesis_failed", error=str(exc))
 
         return deterministic_result
 
@@ -821,6 +829,17 @@ class GeminiPlanner:
             return False
         return (client, method) in cls.PARAMLESS_METHODS
 
+    def _fuzzy_match_router_key(self, key: str) -> str | None:
+        """Resolve a router key using exact or fuzzy matching."""
+        if not key:
+            return None
+        # Try exact match
+        if key in self.router_map:
+            return key
+        # Try fuzzy match (lowercase, spaces -> underscores)
+        fuzzy = key.lower().replace(" ", "_")
+        return fuzzy if fuzzy in self.router_map else None
+
     def _normalize_params(
         self,
         client: str | None,
@@ -859,28 +878,47 @@ class GeminiPlanner:
                 or normalized.pop("router_key", None)
                 or normalized.pop("routerKey", None)
             )
+            
+            # Prioritize explicit address overrides
             if router_override:
                 normalized["router"] = router_override
+
             router_value = normalized.get("router")
-            network_str = str(network) if network else None
+            
+            # Normalize network for lookup: default 'base' -> 'base-mainnet'
+            network_str = str(network) if network else "base-mainnet"
+            if network_str == "base":
+                network_str = "base-mainnet"
+
+            # If we have a label, store it for context
             if router_label and isinstance(router_label, str):
                 normalized.setdefault("routerKey", router_label)
+
+            # Logic to resolve alias -> address
+            # Case 1: router_value is a key (e.g. "uniswap_v2")
             if isinstance(router_value, str) and not router_value.startswith("0x"):
                 normalized.setdefault("routerKey", router_value)
-                if network_str and router_value in self.router_map:
-                    network_map = self.router_map.get(router_value, {})
+                # Try to resolve
+                target_key = self._fuzzy_match_router_key(router_value)
+
+                if target_key:
+                    network_map = self.router_map.get(target_key, {})
                     address = network_map.get(network_str)
                     if address:
                         normalized["router"] = address
-            elif isinstance(
-                original_router_value, str
-            ) and not original_router_value.startswith("0x"):
-                normalized.setdefault("routerKey", original_router_value)
-                if network_str and original_router_value in self.router_map:
-                    network_map = self.router_map.get(original_router_value, {})
+                        normalized["routerKey"] = target_key  # Normalize the key too
+            
+            # Case 2: router_value is None, but we have a label/key that might resolve
+            elif router_value is None and router_label:
+                target_key = self._fuzzy_match_router_key(router_label)
+
+                if target_key:
+                    network_map = self.router_map.get(target_key, {})
                     address = network_map.get(network_str)
                     if address:
-                        normalized.setdefault("router", address)
+                        normalized["router"] = address
+                        normalized["routerKey"] = target_key
+
             normalized.pop("network", None)
             if "sinceMinutes" not in normalized:
                 lookback = (
@@ -1163,7 +1201,7 @@ class GeminiPlanner:
             address
             for key, address in collected_tokens.items()
             if key not in planned_token_keys
-        ][:3]
+        ][:self.MAX_HONEYPOT_CHECKS]
 
         # 4. Fetch additional tokens in parallel
         if additional_tokens:
@@ -1545,6 +1583,23 @@ class GeminiPlanner:
         seen_pairs: Set[str] = set()
         context_tokens: List[Dict[str, str]] = []
         context_seen: Set[str] = set()
+        
+        # Build token map for enrichment
+        token_map: Dict[str, str] = {}
+        for entry in results:
+            if "tokens" in entry:
+                for t in entry["tokens"]:
+                    addr = t.get("address")
+                    symbol = t.get("symbol")
+                    if addr and symbol:
+                        key = addr.lower()
+                        if key not in token_map:
+                            token_map[key] = symbol
+                        elif token_map[key] != symbol:
+                            logger.warning(
+                                f"Duplicate token address {key} with conflicting symbols: "
+                                f"'{token_map[key]}' (existing) vs '{symbol}' (new). Using the first occurrence."
+                            )
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -1559,6 +1614,7 @@ class GeminiPlanner:
                     router_label = call.params.get("routerKey") or call.params.get(
                         "router"
                     )
+                sections.append(self._format_router_activity(call, result, token_map))
                 continue
 
             if call.method in self.DEX_TOKEN_METHODS:
@@ -1809,7 +1865,12 @@ class GeminiPlanner:
             compressed = compressed[:50].rstrip()
         return compressed
 
-    def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
+    def _format_router_activity(
+        self,
+        call: ToolInvocation,
+        result: Any,
+        token_map: Dict[str, str] | None = None,
+    ) -> str:
         router_key = call.params.get("routerKey")
         router_address = call.params.get("router")
         label = router_key or router_address or "router"
@@ -1820,7 +1881,7 @@ class GeminiPlanner:
             return f"No recent transactions for `{label_md}`."
 
         lines = [
-            format_transaction(self._normalize_tx(tx))
+            format_transaction(self._normalize_tx(tx, token_map))
             for tx in transactions[: self.MAX_ROUTER_ITEMS]
         ]
         header = f"Recent transactions for {label_md}"
@@ -1844,7 +1905,11 @@ class GeminiPlanner:
             normalized.append(self._normalize_token(token))
         return normalized
 
-    def _normalize_tx(self, tx: Any) -> Dict[str, str]:
+    def _normalize_tx(
+        self,
+        tx: Any,
+        token_map: Dict[str, str] | None = None,
+    ) -> Dict[str, str]:
         if not isinstance(tx, dict):
             return {}
         hash_value = tx.get("hash") or tx.get("txHash") or ""
@@ -1853,6 +1918,39 @@ class GeminiPlanner:
         decoded = tx.get("decoded")
         if not method and isinstance(decoded, dict):
             method = decoded.get("name") or decoded.get("signature") or "txn"
+        
+        # Enrich method with token symbols if available
+        if token_map and isinstance(decoded, dict) and "params" in decoded:
+            path = []
+            path_candidates = [
+                param.get("value")
+                for param in decoded.get("params", [])
+                if param.get("name") == "path" and isinstance(param.get("value"), list)
+            ]
+            if len(path_candidates) == 1:
+                path = path_candidates[0]
+            elif len(path_candidates) > 1:
+                logger.warning("Multiple 'path' parameters found in decoded params; using the first one.")
+                path = path_candidates[0]
+            else:
+                path = []
+
+            if path:
+                # Try to resolve symbols
+                symbols = []
+                for addr in path:
+                    if isinstance(addr, str):
+                        # Safe fallback for short/malformed addresses
+                        # e.g. 0x123456... -> 0x1234...
+                        if len(addr) >= 6:
+                            fallback = f"0x{addr[2:6]}..." if addr.startswith("0x") else f"{addr[:4]}..."
+                        else:
+                            fallback = addr
+                        symbols.append(token_map.get(addr.lower(), fallback))
+                if len(symbols) >= 2:
+                    # Use arrow character \u279C
+                    method = f"Swap {symbols[0]} \u279C {symbols[-1]}"
+
         amount = tx.get("value") or tx.get("amount") or tx.get("quantity") or ""
         explorer = tx.get("url") or tx.get("explorerUrl") or ""
         if hash_value and not explorer and len(hash_value) > 6:
