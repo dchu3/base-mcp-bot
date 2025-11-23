@@ -12,7 +12,7 @@ def test_sushiswap_v2_configuration():
     routers = load_router_map()
     sushi = routers.get("sushiswap_v2")
     assert sushi is not None
-    assert sushi["base-mainnet"] == "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24"
+    assert sushi["base-mainnet"] == "0x9c1e6b6a7c1a6c2a0b6d7a2dc7e9a0c8ea3a3c1a"
     assert sushi["base-sepolia"] == "0x0000000000000000000000000000000000000000"
 
 def test_resolve_router_sushiswap():
@@ -22,7 +22,7 @@ def test_resolve_router_sushiswap():
     
     assert info.key == "sushiswap_v2"
     assert info.network == "base-mainnet"
-    assert info.address == "0x4752ba5DBc23f44D87826276BF6Fd6b1C372aD24"
+    assert info.address == "0x9c1e6b6a7c1a6c2a0b6d7a2dc7e9a0c8ea3a3c1a"
 
 def test_resolve_router_unknown_key():
     """Verify error handling for unknown router keys."""

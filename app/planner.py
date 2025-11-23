@@ -1595,12 +1595,11 @@ class GeminiPlanner:
                         key = addr.lower()
                         if key not in token_map:
                             token_map[key] = symbol
-                        else:
-                            if token_map[key] != symbol:
-                                logger.warning(
-                                    f"Duplicate token address {key} with conflicting symbols: "
-                                    f"'{token_map[key]}' (existing) vs '{symbol}' (new). Using the first occurrence."
-                                )
+                        elif token_map[key] != symbol:
+                            logger.warning(
+                                f"Duplicate token address {key} with conflicting symbols: "
+                                f"'{token_map[key]}' (existing) vs '{symbol}' (new). Using the first occurrence."
+                            )
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -1942,7 +1941,11 @@ class GeminiPlanner:
                 for addr in path:
                     if isinstance(addr, str):
                         # Safe fallback for short/malformed addresses
-                        fallback = addr[:6] if len(addr) >= 6 else addr
+                        # e.g. 0x123456... -> 0x1234...
+                        if len(addr) >= 6:
+                            fallback = f"0x{addr[2:6]}..." if addr.startswith("0x") else f"{addr[:4]}..."
+                        else:
+                            fallback = addr
                         symbols.append(token_map.get(addr.lower(), fallback))
                 if len(symbols) >= 2:
                     # Use arrow character \u279C
