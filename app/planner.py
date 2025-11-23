@@ -245,18 +245,25 @@ class GeminiPlanner:
         # Generate deterministic result for context extraction and fallback
         deterministic_result = self._render_response(message, context, all_results)
 
-        # Attempt conversational synthesis
-        try:
-            synthesized_text = await self._synthesize_response(message, all_results)
-            if synthesized_text:
-                # Re-attach NFA disclaimer if tokens are present
-                if deterministic_result.tokens:
-                    synthesized_text = append_not_financial_advice(synthesized_text)
-                return PlannerResult(
-                    message=synthesized_text, tokens=deterministic_result.tokens
-                )
-        except Exception as exc:
-            logger.error("planner_synthesis_failed", error=str(exc))
+        # Skip synthesis for router activity to preserve formatted transaction lists
+        skip_synthesis = any(
+            getattr(entry.get("call"), "method", "") == "getDexRouterActivity"
+            for entry in all_results
+        )
+
+        if not skip_synthesis:
+            # Attempt conversational synthesis
+            try:
+                synthesized_text = await self._synthesize_response(message, all_results)
+                if synthesized_text:
+                    # Re-attach NFA disclaimer if tokens are present
+                    if deterministic_result.tokens:
+                        synthesized_text = append_not_financial_advice(synthesized_text)
+                    return PlannerResult(
+                        message=synthesized_text, tokens=deterministic_result.tokens
+                    )
+            except Exception as exc:
+                logger.error("planner_synthesis_failed", error=str(exc))
 
         return deterministic_result
 
@@ -1590,6 +1597,7 @@ class GeminiPlanner:
                     router_label = call.params.get("routerKey") or call.params.get(
                         "router"
                     )
+                sections.append(self._format_router_activity(call, result))
                 continue
 
             if call.method in self.DEX_TOKEN_METHODS:
