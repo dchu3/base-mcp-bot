@@ -859,28 +859,37 @@ class GeminiPlanner:
                 or normalized.pop("router_key", None)
                 or normalized.pop("routerKey", None)
             )
+            
+            # Prioritize explicit address overrides
             if router_override:
                 normalized["router"] = router_override
+
             router_value = normalized.get("router")
             network_str = str(network) if network else None
+
+            # If we have a label, store it for context
             if router_label and isinstance(router_label, str):
                 normalized.setdefault("routerKey", router_label)
+
+            # Logic to resolve alias -> address
+            # Case 1: router_value is a key (e.g. "uniswap_v2")
             if isinstance(router_value, str) and not router_value.startswith("0x"):
                 normalized.setdefault("routerKey", router_value)
+                # Try to resolve
                 if network_str and router_value in self.router_map:
                     network_map = self.router_map.get(router_value, {})
                     address = network_map.get(network_str)
                     if address:
                         normalized["router"] = address
-            elif isinstance(
-                original_router_value, str
-            ) and not original_router_value.startswith("0x"):
-                normalized.setdefault("routerKey", original_router_value)
-                if network_str and original_router_value in self.router_map:
-                    network_map = self.router_map.get(original_router_value, {})
+            
+            # Case 2: router_value is None, but we have a label/key that might resolve
+            elif router_value is None and router_label:
+                 if network_str and router_label in self.router_map:
+                    network_map = self.router_map.get(router_label, {})
                     address = network_map.get(network_str)
                     if address:
-                        normalized.setdefault("router", address)
+                        normalized["router"] = address
+
             normalized.pop("network", None)
             if "sinceMinutes" not in normalized:
                 lookback = (
