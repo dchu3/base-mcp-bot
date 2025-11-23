@@ -876,19 +876,37 @@ class GeminiPlanner:
             if isinstance(router_value, str) and not router_value.startswith("0x"):
                 normalized.setdefault("routerKey", router_value)
                 # Try to resolve
-                if network_str and router_value in self.router_map:
-                    network_map = self.router_map.get(router_value, {})
-                    address = network_map.get(network_str)
-                    if address:
-                        normalized["router"] = address
+                if network_str:
+                    # Try exact match
+                    if router_value in self.router_map:
+                        target_key = router_value
+                    else:
+                        # Try fuzzy match (lowercase, spaces -> underscores)
+                        fuzzy_key = router_value.lower().replace(" ", "_")
+                        target_key = fuzzy_key if fuzzy_key in self.router_map else None
+
+                    if target_key:
+                        network_map = self.router_map.get(target_key, {})
+                        address = network_map.get(network_str)
+                        if address:
+                            normalized["router"] = address
+                            normalized["routerKey"] = target_key  # Normalize the key too
             
             # Case 2: router_value is None, but we have a label/key that might resolve
             elif router_value is None and router_label:
-                 if network_str and router_label in self.router_map:
-                    network_map = self.router_map.get(router_label, {})
-                    address = network_map.get(network_str)
-                    if address:
-                        normalized["router"] = address
+                 if network_str:
+                    if router_label in self.router_map:
+                        target_key = router_label
+                    else:
+                        fuzzy_key = router_label.lower().replace(" ", "_")
+                        target_key = fuzzy_key if fuzzy_key in self.router_map else None
+
+                    if target_key:
+                        network_map = self.router_map.get(target_key, {})
+                        address = network_map.get(network_str)
+                        if address:
+                            normalized["router"] = address
+                            normalized["routerKey"] = target_key
 
             normalized.pop("network", None)
             if "sinceMinutes" not in normalized:
