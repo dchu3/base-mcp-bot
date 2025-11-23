@@ -1201,7 +1201,7 @@ class GeminiPlanner:
             address
             for key, address in collected_tokens.items()
             if key not in planned_token_keys
-        ][:3]
+        ][:6]
 
         # 4. Fetch additional tokens in parallel
         if additional_tokens:
@@ -1583,6 +1583,16 @@ class GeminiPlanner:
         seen_pairs: Set[str] = set()
         context_tokens: List[Dict[str, str]] = []
         context_seen: Set[str] = set()
+        
+        # Build token map for enrichment
+        token_map: Dict[str, str] = {}
+        for entry in results:
+            if "tokens" in entry:
+                for t in entry["tokens"]:
+                    addr = t.get("address")
+                    symbol = t.get("symbol")
+                    if addr and symbol:
+                        token_map[addr.lower()] = symbol
 
         for entry in results:
             call: ToolInvocation = entry["call"]
@@ -1597,7 +1607,7 @@ class GeminiPlanner:
                     router_label = call.params.get("routerKey") or call.params.get(
                         "router"
                     )
-                sections.append(self._format_router_activity(call, result))
+                sections.append(self._format_router_activity(call, result, token_map))
                 continue
 
             if call.method in self.DEX_TOKEN_METHODS:
@@ -1848,7 +1858,12 @@ class GeminiPlanner:
             compressed = compressed[:50].rstrip()
         return compressed
 
-    def _format_router_activity(self, call: ToolInvocation, result: Any) -> str:
+    def _format_router_activity(
+        self,
+        call: ToolInvocation,
+        result: Any,
+        token_map: Dict[str, str] | None = None,
+    ) -> str:
         router_key = call.params.get("routerKey")
         router_address = call.params.get("router")
         label = router_key or router_address or "router"
@@ -1859,7 +1874,7 @@ class GeminiPlanner:
             return f"No recent transactions for `{label_md}`."
 
         lines = [
-            format_transaction(self._normalize_tx(tx))
+            format_transaction(self._normalize_tx(tx, token_map))
             for tx in transactions[: self.MAX_ROUTER_ITEMS]
         ]
         header = f"Recent transactions for {label_md}"
@@ -1883,7 +1898,11 @@ class GeminiPlanner:
             normalized.append(self._normalize_token(token))
         return normalized
 
-    def _normalize_tx(self, tx: Any) -> Dict[str, str]:
+    def _normalize_tx(
+        self,
+        tx: Any,
+        token_map: Dict[str, str] | None = None,
+    ) -> Dict[str, str]:
         if not isinstance(tx, dict):
             return {}
         hash_value = tx.get("hash") or tx.get("txHash") or ""
@@ -1892,6 +1911,24 @@ class GeminiPlanner:
         decoded = tx.get("decoded")
         if not method and isinstance(decoded, dict):
             method = decoded.get("name") or decoded.get("signature") or "txn"
+        
+        # Enrich method with token symbols if available
+        if token_map and isinstance(decoded, dict) and "params" in decoded:
+            path = []
+            for param in decoded.get("params", []):
+                if param.get("name") == "path" and isinstance(param.get("value"), list):
+                    path = param["value"]
+                    break
+            if path:
+                # Try to resolve symbols
+                symbols = []
+                for addr in path:
+                    if isinstance(addr, str):
+                        symbols.append(token_map.get(addr.lower(), addr[:6]))
+                if len(symbols) >= 2:
+                    # Use arrow character \u279C
+                    method = f"Swap {symbols[0]} \u279C {symbols[-1]}"
+
         amount = tx.get("value") or tx.get("amount") or tx.get("quantity") or ""
         explorer = tx.get("url") or tx.get("explorerUrl") or ""
         if hash_value and not explorer and len(hash_value) > 6:
