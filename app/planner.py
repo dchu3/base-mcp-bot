@@ -15,6 +15,7 @@ from string import Template
 import google.generativeai as genai
 
 from app.mcp_client import MCPManager
+from app.planner_types import PlannerResult
 from app.utils.formatting import (
     append_not_financial_advice,
     escape_markdown,
@@ -51,14 +52,6 @@ class HoneypotTarget:
 
     token: str
     pair: str | None = None
-
-
-@dataclass
-class PlannerResult:
-    """Rendered planner response plus normalized token context."""
-
-    message: str
-    tokens: List[Dict[str, str]]
 
 
 @dataclass
