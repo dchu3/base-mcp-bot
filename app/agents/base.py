@@ -57,7 +57,7 @@ class BaseAgent(ABC):
 
         except Exception as exc:
             logger.error(f"agent_{self.name}_plan_failed", error=str(exc))
-            return {"error": str(exc)}
+            return {"output": "", "data": [], "error": str(exc)}
 
     async def _generate_content(self, prompt: str) -> str:
         """Generate content from the LLM."""
@@ -72,10 +72,13 @@ class BaseAgent(ABC):
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Simple cleanup if needed
+            # Robust cleanup for markdown code blocks
             cleaned = text.strip()
             if cleaned.startswith("```json"):
-                cleaned = cleaned[7:-3]
+                cleaned = cleaned[7:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
             return json.loads(cleaned)
 
     def _load_prompt(self, filename: str, **kwargs) -> str:

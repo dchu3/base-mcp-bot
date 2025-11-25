@@ -24,9 +24,19 @@ class AgentContext:
         self.tool_results.append(result)
 
     def add_tokens(self, tokens: List[Dict[str, Any]]) -> None:
-        """Register discovered tokens for downstream agents."""
-        # Simple deduplication could be added here if needed
-        self.found_tokens.extend(tokens)
+        """Register discovered tokens for downstream agents with deduplication."""
+        seen_addresses = {
+            (t.get("address") or t.get("tokenAddress", "")).lower()
+            for t in self.found_tokens
+            if t.get("address") or t.get("tokenAddress")
+        }
+        for token in tokens:
+            addr = token.get("address") or token.get("tokenAddress")
+            if addr and isinstance(addr, str):
+                addr_lower = addr.lower()
+                if addr_lower not in seen_addresses:
+                    self.found_tokens.append(token)
+                    seen_addresses.add(addr_lower)
 
     def get_recent_token_addresses(self) -> List[str]:
         """Return addresses of tokens found in this session."""

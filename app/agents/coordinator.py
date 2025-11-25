@@ -66,9 +66,13 @@ class CoordinatorAgent:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
+            # Robust cleanup for markdown code blocks
             cleaned = text.strip()
             if cleaned.startswith("```json"):
-                cleaned = cleaned[7:-3]
+                cleaned = cleaned[7:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
             return json.loads(cleaned)
 
     async def run(self, message: str, context_data: Dict[str, Any]) -> PlannerResult:
@@ -135,6 +139,14 @@ class CoordinatorAgent:
             # Execute sub-agent
             agent = self.agents[next_agent]
             result = await agent.run(ctx)
+
+            # Handle agent errors
+            if result.get("error"):
+                logger.warning(
+                    "agent_returned_error", agent=next_agent, error=result["error"]
+                )
+                ctx.add_result({"agent": next_agent, "error": result["error"]})
+                continue  # Let the LLM decide what to do next
 
             # Update context
             if result.get("data"):
@@ -258,10 +270,11 @@ class CoordinatorAgent:
             if isinstance(t, dict) and (t.get("baseToken") or t.get("tokenAddress")):
                 # Basic normalization
                 norm = t.copy()
-                if "baseToken" in t:
-                    norm["address"] = t["baseToken"].get("address")
-                    norm["symbol"] = t["baseToken"].get("symbol")
-                    norm["name"] = t["baseToken"].get("name")
+                base_token = t.get("baseToken")
+                if isinstance(base_token, dict):
+                    norm["address"] = base_token.get("address")
+                    norm["symbol"] = base_token.get("symbol")
+                    norm["name"] = base_token.get("name")
                 elif "tokenAddress" in t:
                     norm["address"] = t["tokenAddress"]
 

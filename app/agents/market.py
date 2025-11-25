@@ -12,12 +12,12 @@ class MarketAgent(BaseAgent):
     async def run(self, context: AgentContext) -> Dict[str, Any]:
         # Format routers with addresses for the prompt
         router_lines = []
-        network = context.network or "base"
+        network = context.network or "base-mainnet"
         # Normalize network name
         if network == "base":
             network = "base-mainnet"
         for key, networks in context.router_map.items():
-            addr = networks.get(network) or networks.get("base-mainnet")
+            addr = networks.get(network)
             if addr:
                 router_lines.append(f"- {key}: {addr}")
         routers_str = (
