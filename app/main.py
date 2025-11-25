@@ -65,19 +65,6 @@ async def main() -> None:
 
     router_map = load_router_map()
 
-    # prompt_template = load_prompt_template(settings.planner_prompt_file)
-    # planner = GeminiPlanner(
-    #     api_key=settings.gemini_api_key,
-    #     mcp_manager=mcp_manager,
-    #     router_keys=router_keys,
-    #     router_map=router_map,
-    #     model_name=settings.gemini_model,
-    #     prompt_template=prompt_template,
-    #     confidence_threshold=settings.planner_confidence_threshold,
-    #     enable_reflection=settings.planner_enable_reflection,
-    #     max_iterations=settings.planner_max_iterations,
-    # )
-
     planner = CoordinatorAgent(
         api_key=settings.gemini_api_key,
         mcp_manager=mcp_manager,

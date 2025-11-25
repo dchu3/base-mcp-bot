@@ -40,9 +40,10 @@ class AgentContext:
 
     def get_recent_token_addresses(self) -> List[str]:
         """Return addresses of tokens found in this session."""
+        # Tokens are already deduplicated by add_tokens, just extract addresses
         addresses = []
         for t in self.found_tokens:
             addr = t.get("address") or t.get("tokenAddress")
             if addr and isinstance(addr, str):
                 addresses.append(addr)
-        return list(set(addresses))
+        return addresses

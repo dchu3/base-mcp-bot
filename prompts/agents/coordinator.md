@@ -21,7 +21,7 @@ Instructions:
 IMPORTANT: When you see successful tool results, you MUST output FINISH with a final_response that describes the data to the user. Do NOT keep calling agents after data is retrieved.
 
 Examples:
-- User: "Is PEPE safe?" -> Call `discovery` -> (Success: 2 pairs found) -> Call `safety` -> (Success: Verdict SAFE) -> FINISH with "PEPE appears safe to trade..."
+- User: "Is PEPE safe?" -> Call `discovery` -> (Success: 2 pairs found) -> Call `safety` -> (Success: Verdict `SAFE`) -> FINISH with "PEPE appears safe to trade..."
 - User: "Trending tokens?" -> Call `discovery` -> (Success: 5 pairs found) -> FINISH with "Here are trending tokens: ..."
 - User: "Uniswap activity?" -> Call `market` -> (Success: 10 transactions found) -> FINISH with "Recent Uniswap activity shows 10 swaps..."
 

@@ -9,6 +9,7 @@ from app.agents.safety import SafetyAgent
 from app.agents.market import MarketAgent
 from app.planner_types import PlannerResult
 from app.utils.formatting import escape_markdown
+from app.utils.json_utils import parse_llm_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -63,17 +64,7 @@ class CoordinatorAgent:
 
     def _parse_json(self, text: str) -> Dict[str, Any]:
         """Parse JSON from LLM response."""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Robust cleanup for markdown code blocks
-            cleaned = text.strip()
-            if cleaned.startswith("```json"):
-                cleaned = cleaned[7:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-            return json.loads(cleaned)
+        return parse_llm_json(text)
 
     async def run(self, message: str, context_data: Dict[str, Any]) -> PlannerResult:
         """Main entry point for the agent system."""
@@ -90,8 +81,8 @@ class CoordinatorAgent:
         if context_data.get("recent_tokens"):
             ctx.add_tokens(context_data["recent_tokens"])
 
-        for i in range(self.MAX_ITERATIONS):
-            logger.info("coordinator_step", iteration=i + 1)
+        for step in range(self.MAX_ITERATIONS):
+            logger.info("coordinator_step", iteration=step + 1)
 
             # Prepare prompt
             prompt = self._load_prompt(

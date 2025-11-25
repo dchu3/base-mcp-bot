@@ -1,6 +1,5 @@
 """Abstract base class for agents."""
 
-import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from string import Template
@@ -9,6 +8,7 @@ import google.generativeai as genai
 
 from app.mcp_client import MCPManager
 from app.agents.context import AgentContext
+from app.utils.json_utils import parse_llm_json
 from app.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -69,17 +69,7 @@ class BaseAgent(ABC):
 
     def _parse_json(self, text: str) -> Dict[str, Any]:
         """Parse JSON from LLM response."""
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Robust cleanup for markdown code blocks
-            cleaned = text.strip()
-            if cleaned.startswith("```json"):
-                cleaned = cleaned[7:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-            return json.loads(cleaned)
+        return parse_llm_json(text)
 
     def _load_prompt(self, filename: str, **kwargs) -> str:
         """Load and substitute a prompt template."""

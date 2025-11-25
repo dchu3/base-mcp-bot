@@ -1,6 +1,7 @@
 """Tests for the hierarchical agent system."""
 
-from unittest.mock import MagicMock
+import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from app.agents.context import AgentContext
 from app.agents.base import BaseAgent
@@ -45,13 +46,13 @@ class TestAgentContext:
         assert len(ctx.found_tokens) == 1
 
     def test_get_recent_token_addresses(self) -> None:
-        """Test extracting unique addresses."""
+        """Test extracting addresses from tokens."""
         ctx = AgentContext(message="test")
-        ctx.found_tokens = [
+        # Use add_tokens to properly populate (which deduplicates)
+        ctx.add_tokens([
             {"address": "0xAAA"},
             {"tokenAddress": "0xBBB"},
-            {"address": "0xAAA"},  # Duplicate
-        ]
+        ])
 
         addresses = ctx.get_recent_token_addresses()
         assert len(addresses) == 2
@@ -196,3 +197,89 @@ class TestCoordinatorSummarizeResults:
 
         summary = coordinator._summarize_results([])
         assert summary == "No results yet"
+
+
+class TestParseJsonUtility:
+    """Tests for the shared parse_llm_json utility."""
+
+    def test_parse_plain_json(self) -> None:
+        """Test parsing plain JSON."""
+        from app.utils.json_utils import parse_llm_json
+
+        result = parse_llm_json('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_parse_json_with_code_block(self) -> None:
+        """Test parsing JSON with markdown code block."""
+        from app.utils.json_utils import parse_llm_json
+
+        result = parse_llm_json('```json\n{"key": "value"}\n```')
+        assert result == {"key": "value"}
+
+    def test_parse_json_with_extra_whitespace(self) -> None:
+        """Test parsing JSON with extra whitespace."""
+        from app.utils.json_utils import parse_llm_json
+
+        result = parse_llm_json('  \n```json\n{"key": "value"}\n```\n\n  ')
+        assert result == {"key": "value"}
+
+
+class TestCoordinatorIntegration:
+    """Integration tests for CoordinatorAgent.run()."""
+
+    def _make_coordinator(self) -> CoordinatorAgent:
+        """Create coordinator with mocked dependencies."""
+        import google.generativeai as genai
+
+        genai.configure = MagicMock()
+
+        mcp = MagicMock()
+        mcp.base = MagicMock()
+        mcp.dexscreener = MagicMock()
+        mcp.honeypot = MagicMock()
+
+        return CoordinatorAgent(
+            api_key="fake-key",
+            mcp_manager=mcp,
+            model_name="gemini-1.5-flash",
+            router_map={"uniswap_v2": {"base-mainnet": "0x1234"}},
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_finishes_with_response(self) -> None:
+        """Test that run() returns a PlannerResult when LLM says FINISH."""
+        coordinator = self._make_coordinator()
+
+        # Mock the LLM to immediately return FINISH
+        coordinator._generate_content = AsyncMock(
+            return_value='{"reasoning": "Done", "next_agent": "FINISH", "final_response": "Here is your answer."}'
+        )
+
+        result = await coordinator.run("test message", {})
+
+        assert result.message is not None
+        assert "Here is your answer" in result.message
+
+    @pytest.mark.asyncio
+    async def test_run_delegates_to_agent(self) -> None:
+        """Test that run() delegates to the correct sub-agent."""
+        coordinator = self._make_coordinator()
+
+        call_count = 0
+
+        async def mock_generate(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return '{"reasoning": "Need discovery", "next_agent": "discovery"}'
+            return '{"reasoning": "Done", "next_agent": "FINISH", "final_response": "Found tokens."}'
+
+        coordinator._generate_content = mock_generate
+        coordinator.agents["discovery"].run = AsyncMock(
+            return_value={"output": "Found 2 tokens", "data": []}
+        )
+
+        result = await coordinator.run("find PEPE", {})
+
+        coordinator.agents["discovery"].run.assert_called_once()
+        assert "Found tokens" in result.message
