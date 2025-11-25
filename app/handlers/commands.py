@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Protocol
 
 from telegram import Update, constants
 from telegram.error import BadRequest
@@ -16,12 +16,19 @@ from telegram.ext import (
     filters,
 )
 
-from app.planner import GeminiPlanner
+from app.planner_types import PlannerResult
 from app.store.db import Database, TokenContext
 from app.store.repository import Repository
 from app.utils.formatting import escape_markdown, unescape_markdown
 from app.utils.logging import get_logger
 from app.utils.rate_limit import RateLimiter
+
+
+class Planner(Protocol):
+    """Protocol for planner implementations."""
+
+    async def run(self, message: str, context: dict) -> PlannerResult: ...
+
 
 logger = get_logger(__name__)
 
@@ -29,7 +36,7 @@ logger = get_logger(__name__)
 @dataclass
 class HandlerContext:
     db: Database
-    planner: GeminiPlanner
+    planner: Planner
     rate_limiter: RateLimiter | None
     admin_ids: List[int]
     allowed_chat_id: int | None

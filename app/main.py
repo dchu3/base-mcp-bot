@@ -14,12 +14,11 @@ from app.config import load_settings
 from app.handlers.commands import HandlerContext, setup as setup_handlers
 from app.jobs.cleanup import CleanupService
 from app.mcp_client import MCPManager
-from app.planner import GeminiPlanner
+from app.agents.coordinator import CoordinatorAgent
 from app.store.db import Database
 from app.store.repository import Repository
 from app.utils.logging import configure_logging, get_logger
 from app.utils.rate_limit import RateLimiter
-from app.utils.prompts import load_prompt_template
 from app.utils.routers import load_router_map
 
 logger = get_logger(__name__)
@@ -65,19 +64,25 @@ async def main() -> None:
     await mcp_manager.start()
 
     router_map = load_router_map()
-    router_keys = list(router_map.keys())
 
-    prompt_template = load_prompt_template(settings.planner_prompt_file)
-    planner = GeminiPlanner(
+    # prompt_template = load_prompt_template(settings.planner_prompt_file)
+    # planner = GeminiPlanner(
+    #     api_key=settings.gemini_api_key,
+    #     mcp_manager=mcp_manager,
+    #     router_keys=router_keys,
+    #     router_map=router_map,
+    #     model_name=settings.gemini_model,
+    #     prompt_template=prompt_template,
+    #     confidence_threshold=settings.planner_confidence_threshold,
+    #     enable_reflection=settings.planner_enable_reflection,
+    #     max_iterations=settings.planner_max_iterations,
+    # )
+
+    planner = CoordinatorAgent(
         api_key=settings.gemini_api_key,
         mcp_manager=mcp_manager,
-        router_keys=router_keys,
-        router_map=router_map,
         model_name=settings.gemini_model,
-        prompt_template=prompt_template,
-        confidence_threshold=settings.planner_confidence_threshold,
-        enable_reflection=settings.planner_enable_reflection,
-        max_iterations=settings.planner_max_iterations,
+        router_map=router_map,
     )
 
     rate_limiter = RateLimiter(settings.rate_limit_per_user_per_min)
