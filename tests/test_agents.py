@@ -3,9 +3,33 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+import google.generativeai as genai
+
 from app.agents.context import AgentContext
 from app.agents.base import BaseAgent
 from app.agents.coordinator import CoordinatorAgent
+
+
+@pytest.fixture
+def mock_mcp():
+    """Create a mocked MCP manager."""
+    mcp = MagicMock()
+    mcp.base = MagicMock()
+    mcp.dexscreener = MagicMock()
+    mcp.honeypot = MagicMock()
+    return mcp
+
+
+@pytest.fixture
+def mock_coordinator(mock_mcp):
+    """Create a coordinator with mocked dependencies."""
+    genai.configure = MagicMock()
+    return CoordinatorAgent(
+        api_key="fake-key",
+        mcp_manager=mock_mcp,
+        model_name="gemini-1.5-flash",
+        router_map={"uniswap_v2": {"base-mainnet": "0x1234"}},
+    )
 
 
 class TestAgentContext:
@@ -48,11 +72,12 @@ class TestAgentContext:
     def test_get_recent_token_addresses(self) -> None:
         """Test extracting addresses from tokens."""
         ctx = AgentContext(message="test")
-        # Use add_tokens to properly populate (which deduplicates)
-        ctx.add_tokens([
-            {"address": "0xAAA"},
-            {"tokenAddress": "0xBBB"},
-        ])
+        ctx.add_tokens(
+            [
+                {"address": "0xAAA"},
+                {"tokenAddress": "0xBBB"},
+            ]
+        )
 
         addresses = ctx.get_recent_token_addresses()
         assert len(addresses) == 2
@@ -102,29 +127,8 @@ class TestBaseAgentParseJson:
 class TestCoordinatorSummarizeResults:
     """Tests for CoordinatorAgent._summarize_results."""
 
-    def _make_coordinator(self) -> CoordinatorAgent:
-        """Create coordinator with mocked dependencies."""
-        # We need to mock genai to avoid API key requirement
-        import google.generativeai as genai
-
-        genai.configure = MagicMock()
-
-        mcp = MagicMock()
-        mcp.base = MagicMock()
-        mcp.dexscreener = MagicMock()
-        mcp.honeypot = MagicMock()
-
-        return CoordinatorAgent(
-            api_key="fake-key",
-            mcp_manager=mcp,
-            model_name="gemini-1.5-flash",
-            router_map={},
-        )
-
-    def test_summarize_router_activity(self) -> None:
+    def test_summarize_router_activity(self, mock_coordinator) -> None:
         """Test summarizing router activity results."""
-        coordinator = self._make_coordinator()
-
         results = [
             {
                 "call": {"client": "base", "method": "getDexRouterActivity"},
@@ -138,14 +142,12 @@ class TestCoordinatorSummarizeResults:
             }
         ]
 
-        summary = coordinator._summarize_results(results)
+        summary = mock_coordinator._summarize_results(results)
         assert "3 transactions found" in summary
         assert "swap" in summary
 
-    def test_summarize_dexscreener_pairs(self) -> None:
+    def test_summarize_dexscreener_pairs(self, mock_coordinator) -> None:
         """Test summarizing Dexscreener pair results."""
-        coordinator = self._make_coordinator()
-
         results = [
             {
                 "call": {"client": "dexscreener", "method": "searchPairs"},
@@ -158,14 +160,12 @@ class TestCoordinatorSummarizeResults:
             }
         ]
 
-        summary = coordinator._summarize_results(results)
+        summary = mock_coordinator._summarize_results(results)
         assert "2 pairs found" in summary
         assert "PEPE" in summary
 
-    def test_summarize_honeypot_check(self) -> None:
+    def test_summarize_honeypot_check(self, mock_coordinator) -> None:
         """Test summarizing honeypot check results."""
-        coordinator = self._make_coordinator()
-
         results = [
             {
                 "call": {"client": "honeypot", "method": "check_token"},
@@ -173,13 +173,11 @@ class TestCoordinatorSummarizeResults:
             }
         ]
 
-        summary = coordinator._summarize_results(results)
+        summary = mock_coordinator._summarize_results(results)
         assert "Verdict: SAFE_TO_TRADE" in summary
 
-    def test_summarize_error_result(self) -> None:
+    def test_summarize_error_result(self, mock_coordinator) -> None:
         """Test summarizing error results."""
-        coordinator = self._make_coordinator()
-
         results = [
             {
                 "call": {"client": "base", "method": "getDexRouterActivity"},
@@ -187,15 +185,13 @@ class TestCoordinatorSummarizeResults:
             }
         ]
 
-        summary = coordinator._summarize_results(results)
+        summary = mock_coordinator._summarize_results(results)
         assert "Error" in summary
         assert "Connection timeout" in summary
 
-    def test_summarize_empty_results(self) -> None:
+    def test_summarize_empty_results(self, mock_coordinator) -> None:
         """Test summarizing empty results."""
-        coordinator = self._make_coordinator()
-
-        summary = coordinator._summarize_results([])
+        summary = mock_coordinator._summarize_results([])
         assert summary == "No results yet"
 
 
@@ -227,44 +223,21 @@ class TestParseJsonUtility:
 class TestCoordinatorIntegration:
     """Integration tests for CoordinatorAgent.run()."""
 
-    def _make_coordinator(self) -> CoordinatorAgent:
-        """Create coordinator with mocked dependencies."""
-        import google.generativeai as genai
-
-        genai.configure = MagicMock()
-
-        mcp = MagicMock()
-        mcp.base = MagicMock()
-        mcp.dexscreener = MagicMock()
-        mcp.honeypot = MagicMock()
-
-        return CoordinatorAgent(
-            api_key="fake-key",
-            mcp_manager=mcp,
-            model_name="gemini-1.5-flash",
-            router_map={"uniswap_v2": {"base-mainnet": "0x1234"}},
-        )
-
     @pytest.mark.asyncio
-    async def test_run_finishes_with_response(self) -> None:
+    async def test_run_finishes_with_response(self, mock_coordinator) -> None:
         """Test that run() returns a PlannerResult when LLM says FINISH."""
-        coordinator = self._make_coordinator()
-
-        # Mock the LLM to immediately return FINISH
-        coordinator._generate_content = AsyncMock(
+        mock_coordinator._generate_content = AsyncMock(
             return_value='{"reasoning": "Done", "next_agent": "FINISH", "final_response": "Here is your answer."}'
         )
 
-        result = await coordinator.run("test message", {})
+        result = await mock_coordinator.run("test message", {})
 
         assert result.message is not None
         assert "Here is your answer" in result.message
 
     @pytest.mark.asyncio
-    async def test_run_delegates_to_agent(self) -> None:
+    async def test_run_delegates_to_agent(self, mock_coordinator) -> None:
         """Test that run() delegates to the correct sub-agent."""
-        coordinator = self._make_coordinator()
-
         call_count = 0
 
         async def mock_generate(*args, **kwargs):
@@ -274,12 +247,12 @@ class TestCoordinatorIntegration:
                 return '{"reasoning": "Need discovery", "next_agent": "discovery"}'
             return '{"reasoning": "Done", "next_agent": "FINISH", "final_response": "Found tokens."}'
 
-        coordinator._generate_content = mock_generate
-        coordinator.agents["discovery"].run = AsyncMock(
+        mock_coordinator._generate_content = mock_generate
+        mock_coordinator.agents["discovery"].run = AsyncMock(
             return_value={"output": "Found 2 tokens", "data": []}
         )
 
-        result = await coordinator.run("find PEPE", {})
+        result = await mock_coordinator.run("find PEPE", {})
 
-        coordinator.agents["discovery"].run.assert_called_once()
+        mock_coordinator.agents["discovery"].run.assert_called_once()
         assert "Found tokens" in result.message

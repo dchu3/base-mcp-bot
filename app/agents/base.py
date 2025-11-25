@@ -41,7 +41,7 @@ class BaseAgent(ABC):
             plan = self._parse_json(response)
 
             if not plan.get("tools"):
-                return {"output": "No tools needed.", "data": []}
+                return {"output": plan.get("reasoning", "No tools needed."), "data": []}
 
             results = []
             for tool in plan["tools"]:
@@ -56,7 +56,7 @@ class BaseAgent(ABC):
             return {"output": plan.get("reasoning", ""), "data": results}
 
         except Exception as exc:
-            logger.error(f"agent_{self.name}_plan_failed", error=str(exc))
+            logger.error("agent_plan_failed", agent=self.name, error=str(exc))
             return {"output": "", "data": [], "error": str(exc)}
 
     async def _generate_content(self, prompt: str) -> str:
@@ -96,7 +96,8 @@ class BaseAgent(ABC):
                 raise ValueError(f"MCP client '{client_name}' not available")
 
             logger.info(
-                f"agent_{self.name}_call",
+                "agent_tool_call",
+                agent=self.name,
                 client=client_name,
                 method=method,
                 params=params,
@@ -107,7 +108,7 @@ class BaseAgent(ABC):
                 "result": result,
             }
         except Exception as exc:
-            logger.error(f"agent_{self.name}_error", error=str(exc))
+            logger.error("agent_tool_error", agent=self.name, error=str(exc))
             return {
                 "call": {"client": client_name, "method": method, "params": params},
                 "error": str(exc),

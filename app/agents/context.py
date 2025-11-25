@@ -6,7 +6,19 @@ from typing import Any, Dict, List
 
 @dataclass
 class AgentContext:
-    """State shared between agents during a request lifecycle."""
+    """State shared between agents during a request lifecycle.
+
+    This context object is passed between the Coordinator and sub-agents,
+    allowing them to share discovered tokens, tool results, and configuration.
+
+    Attributes:
+        message: The original user request.
+        network: The blockchain network (e.g., 'base', 'base-mainnet').
+        conversation_history: Recent messages for context.
+        found_tokens: Tokens discovered by agents (deduplicated by address).
+        tool_results: Results from MCP tool calls.
+        router_map: DEX router addresses keyed by name and network.
+    """
 
     message: str
     network: str = "base"

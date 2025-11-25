@@ -25,9 +25,25 @@ from app.utils.rate_limit import RateLimiter
 
 
 class Planner(Protocol):
-    """Protocol for planner implementations."""
+    """Protocol for planner implementations.
 
-    async def run(self, message: str, context: dict) -> PlannerResult: ...
+    Any class implementing this protocol can be used as the planner
+    in HandlerContext. The run method processes user messages and
+    returns structured results.
+    """
+
+    async def run(self, message: str, context: dict) -> PlannerResult:
+        """Process a user message and return a response.
+
+        Args:
+            message: The user's input text.
+            context: Additional context including conversation history,
+                recent tokens, and network information.
+
+        Returns:
+            PlannerResult with the response message and any discovered tokens.
+        """
+        ...
 
 
 logger = get_logger(__name__)

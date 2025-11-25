@@ -240,7 +240,17 @@ class CoordinatorAgent:
     def _extract_and_add_tokens(
         self, ctx: AgentContext, result_item: Dict[str, Any]
     ) -> None:
-        """Extract tokens from Dexscreener results."""
+        """Extract tokens from Dexscreener results and add to context.
+
+        Handles multiple Dexscreener response formats:
+        - List of pairs with baseToken objects
+        - Dict with 'pairs' or 'tokens' array
+        - Direct token objects with 'tokenAddress'
+
+        Args:
+            ctx: The agent context to add tokens to.
+            result_item: A tool result dict containing 'result' key.
+        """
         if "result" not in result_item:
             return
 

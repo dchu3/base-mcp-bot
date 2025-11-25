@@ -27,4 +27,11 @@ def parse_llm_json(text: str) -> Dict[str, Any]:
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
-        return json.loads(cleaned)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            # Include cleaned text preview in error for debugging
+            preview = cleaned[:100] + "..." if len(cleaned) > 100 else cleaned
+            raise json.JSONDecodeError(
+                f"Failed to parse LLM JSON. Preview: {preview}", e.doc, e.pos
+            ) from e
