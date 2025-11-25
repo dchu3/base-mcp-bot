@@ -181,3 +181,54 @@ def unescape_markdown(text: str) -> str:
             result.append(text[i])
             i += 1
     return "".join(result)
+
+
+# Telegram message length limit (with buffer for safety)
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+TRUNCATION_SUFFIX = "\n\n⚠️ _Response truncated due to length_"
+
+
+def truncate_message(text: str, max_len: int = 4000) -> str:
+    """Truncate a message to fit Telegram's length limit.
+
+    Tries to truncate at a logical boundary (newline, then sentence).
+    Leaves room for a truncation notice.
+
+    Args:
+        text: The message text to truncate.
+        max_len: Maximum length before truncation (default 4000 to leave room for suffix).
+
+    Returns:
+        The original text if within limit, or truncated text with suffix.
+    """
+    if not text or len(text) <= max_len:
+        return text
+
+    # Reserve space for truncation suffix
+    suffix_len = len(TRUNCATION_SUFFIX)
+    target_len = max_len - suffix_len
+
+    if target_len <= 0:
+        return text[:max_len]
+
+    truncated = text[:target_len]
+
+    # Try to find a good break point
+    # First, try to break at a double newline (paragraph)
+    last_para = truncated.rfind("\n\n")
+    if last_para > target_len * 0.5:
+        truncated = truncated[:last_para]
+    else:
+        # Try to break at a single newline
+        last_newline = truncated.rfind("\n")
+        if last_newline > target_len * 0.5:
+            truncated = truncated[:last_newline]
+        else:
+            # Try to break at a sentence
+            for sep in (". ", "! ", "? "):
+                last_sentence = truncated.rfind(sep)
+                if last_sentence > target_len * 0.5:
+                    truncated = truncated[: last_sentence + 1]
+                    break
+
+    return truncated.rstrip() + TRUNCATION_SUFFIX

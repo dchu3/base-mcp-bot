@@ -19,7 +19,7 @@ from telegram.ext import (
 from app.planner_types import PlannerResult
 from app.store.db import Database, TokenContext
 from app.store.repository import Repository
-from app.utils.formatting import escape_markdown, unescape_markdown
+from app.utils.formatting import escape_markdown, truncate_message, unescape_markdown
 from app.utils.logging import get_logger
 from app.utils.rate_limit import RateLimiter
 
@@ -306,14 +306,46 @@ async def send_planner_response(
             disable_web_page_preview=True,
         )
     except BadRequest as exc:
-        logger.warning("telegram_markdown_failed", error=str(exc), text=response_text)
-        # Remove markdown escapes for plain text display
-        plain_text = unescape_markdown(response_text)
-        await update.message.reply_text(
-            plain_text,
-            parse_mode=None,
-            disable_web_page_preview=True,
-        )
+        error_msg = str(exc).lower()
+        logger.warning("telegram_send_failed", error=str(exc))
+
+        if "too long" in error_msg:
+            # Message exceeds Telegram's 4096 character limit
+            truncated = truncate_message(response_text)
+            try:
+                await update.message.reply_text(
+                    truncated,
+                    parse_mode="MarkdownV2",
+                    disable_web_page_preview=True,
+                )
+            except BadRequest:
+                # Fallback to plain text if markdown still fails
+                plain_truncated = truncate_message(unescape_markdown(response_text))
+                await update.message.reply_text(
+                    plain_truncated,
+                    parse_mode=None,
+                    disable_web_page_preview=True,
+                )
+        else:
+            # Markdown parsing error - try plain text
+            plain_text = unescape_markdown(response_text)
+            try:
+                await update.message.reply_text(
+                    plain_text,
+                    parse_mode=None,
+                    disable_web_page_preview=True,
+                )
+            except BadRequest as plain_exc:
+                # Plain text also too long
+                if "too long" in str(plain_exc).lower():
+                    truncated = truncate_message(plain_text)
+                    await update.message.reply_text(
+                        truncated,
+                        parse_mode=None,
+                        disable_web_page_preview=True,
+                    )
+                else:
+                    raise
 
     # Save conversation to memory
     if ctx.db and db_user_id:
