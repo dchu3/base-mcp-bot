@@ -14,7 +14,7 @@ from app.config import load_settings
 from app.handlers.commands import HandlerContext, setup as setup_handlers
 from app.jobs.cleanup import CleanupService
 from app.mcp_client import MCPManager
-from app.agents.coordinator import CoordinatorAgent
+from app.simple_planner import SimplePlanner
 from app.store.db import Database
 from app.store.repository import Repository
 from app.utils.logging import configure_logging, get_logger
@@ -65,11 +65,12 @@ async def main() -> None:
 
     router_map = load_router_map()
 
-    planner = CoordinatorAgent(
+    planner = SimplePlanner(
         api_key=settings.gemini_api_key,
         mcp_manager=mcp_manager,
         model_name=settings.gemini_model,
         router_map=router_map,
+        enable_ai_insights=True,
     )
 
     rate_limiter = RateLimiter(settings.rate_limit_per_user_per_min)
