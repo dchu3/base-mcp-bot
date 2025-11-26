@@ -31,11 +31,20 @@ def configure_logging(
     # Clear existing handlers
     root_logger.handlers.clear()
 
+    # Create formatter for structlog
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+        foreign_pre_chain=[
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+        ],
+    )
+
     # Add console handler if enabled
     if console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
 
     # Add file handler if specified
@@ -43,24 +52,22 @@ def configure_logging(
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file, mode="w")
         file_handler.setLevel(log_level)
-        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)
 
-    # Configure structlog to use stdlib logging (avoids file handle leaks)
+    # Configure structlog to route through stdlib logging
     structlog.configure(
         processors=[
-            structlog.threadlocal.merge_threadlocal_context,
-            structlog.processors.add_log_level,
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
-            structlog.dev.set_exc_info,
-            structlog.processors.JSONRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(level.upper())
-        ),
+        wrapper_class=structlog.stdlib.BoundLogger,
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=False,  # Allow reconfiguration
     )
 
