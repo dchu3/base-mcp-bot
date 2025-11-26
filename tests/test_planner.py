@@ -137,6 +137,7 @@ def test_derive_chain_id_defaults_to_base() -> None:
 
 
 def test_render_response_prefers_token_summaries() -> None:
+    """Token summaries should appear before transaction list."""
     planner = _make_planner()
     base_call = ToolInvocation(
         client="base",
@@ -174,8 +175,12 @@ def test_render_response_prefers_token_summaries() -> None:
     )
 
     assert isinstance(response.message, str)
-    assert "Recent transactions" not in response.message
-    assert "Dexscreener snapshots for uniswap\\_v3" in response.message
+    # Token summaries should appear before transactions
+    dex_pos = response.message.find("Dexscreener snapshots")
+    tx_pos = response.message.find("Recent transactions")
+    assert dex_pos != -1, "Dexscreener snapshots should be present"
+    assert tx_pos != -1, "Recent transactions should be present"
+    assert dex_pos < tx_pos, "Token summaries should appear before transactions"
     assert "AAA/BBB" in response.message
     assert response.tokens
 
@@ -450,15 +455,15 @@ async def test_handle_chitchat_escapes_markdown() -> None:
     mock_part.text = "Hello! I can help you with tokens."
     mock_candidate.content.parts = [mock_part]
     mock_response.candidates = [mock_candidate]
-    
+
     # Mock generate_content to return the mock response
     planner.model.generate_content.return_value = mock_response
-    
+
     context = {"conversation_history": []}
     result = await planner._handle_chitchat("Hi", context)
-    
+
     # The text "Hello! I can help you with tokens." contains '!', which is reserved in MarkdownV2
     # It should be escaped to "Hello\! I can help you with tokens\."
-    
+
     assert "\\" in result.message
     assert result.message == "Hello\\! I can help you with tokens\\."
