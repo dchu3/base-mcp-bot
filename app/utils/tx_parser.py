@@ -52,18 +52,30 @@ def extract_tokens_from_transactions(transactions: List[Dict[str, Any]]) -> List
             tx.get("decoded_input")
             or tx.get("decodedInput")
             or tx.get("decoded")
+            or tx.get("decodedMethod")
             or tx.get("parameters")
             or {}
         )
         if isinstance(decoded, dict):
             addresses.update(_extract_addresses_from_decoded(decoded))
+            # Check params inside decodedMethod
+            if decoded.get("params"):
+                for param in decoded["params"]:
+                    if isinstance(param, dict):
+                        addresses.update(_extract_addresses_from_decoded(param))
 
         # Also check if decoded is in a nested 'result' field
         if isinstance(tx.get("result"), dict):
             addresses.update(_extract_addresses_from_decoded(tx["result"]))
 
-        # Extract from raw input data if available
-        raw_input = tx.get("input") or tx.get("raw_input") or tx.get("data") or ""
+        # Extract from raw input data if available (check rawInput too!)
+        raw_input = (
+            tx.get("rawInput")
+            or tx.get("input")
+            or tx.get("raw_input")
+            or tx.get("data")
+            or ""
+        )
         if raw_input and len(raw_input) > 10:
             addresses.update(_extract_addresses_from_raw(raw_input))
 
@@ -160,7 +172,7 @@ def _extract_addresses_from_raw(data: str) -> Set[str]:
 
 
 def _filter_addresses(addresses: Set[str]) -> Set[str]:
-    """Filter out known non-token addresses."""
+    """Filter out known non-token addresses and invalid patterns."""
     # Common addresses to exclude (routers, WETH, null address)
     exclude = {
         "0x0000000000000000000000000000000000000000",  # Null
@@ -170,7 +182,27 @@ def _filter_addresses(addresses: Set[str]) -> Set[str]:
         "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43",  # Aerodrome Router
     }
 
-    return {addr for addr in addresses if addr.lower() not in exclude}
+    filtered = set()
+    for addr in addresses:
+        addr_lower = addr.lower()
+
+        # Skip excluded addresses
+        if addr_lower in exclude:
+            continue
+
+        # Skip addresses that look like small numbers (parameters, not addresses)
+        # Real token addresses have significant entropy
+        if addr_lower.startswith("0x00000000000000000000000000000000"):
+            continue
+
+        # Skip addresses that are too short after removing leading zeros
+        stripped = addr_lower.lstrip("0x").lstrip("0")
+        if len(stripped) < 10:
+            continue
+
+        filtered.add(addr_lower)
+
+    return filtered
 
 
 def get_swap_direction(tx: Dict[str, Any]) -> Optional[str]:
