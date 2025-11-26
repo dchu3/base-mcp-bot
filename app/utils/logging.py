@@ -4,18 +4,55 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 import structlog
 
 
-def configure_logging(level: str = "INFO") -> None:
-    """Configure stdlib logging + structlog for structured output."""
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout,
-        level=getattr(logging, level.upper(), logging.INFO),
-    )
+def configure_logging(
+    level: str = "INFO",
+    log_file: Optional[Path] = None,
+    console: bool = True,
+) -> None:
+    """Configure stdlib logging + structlog for structured output.
+
+    Args:
+        level: Log level (DEBUG, INFO, WARNING, ERROR).
+        log_file: Optional path to write logs to file.
+        console: Whether to output logs to console (default True).
+    """
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Clear existing handlers
+    root_logger.handlers.clear()
+
+    # Add console handler if enabled
+    if console:
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        root_logger.addHandler(console_handler)
+
+    # Add file handler if specified
+    if log_file:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file, mode="w")
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(logging.Formatter("%(message)s"))
+        root_logger.addHandler(file_handler)
+
+    # Determine output target for structlog
+    if log_file and not console:
+        # File only - use file logger factory
+        logger_factory = structlog.WriteLoggerFactory(file=log_file.open("a"))
+    else:
+        # Console (with or without file)
+        logger_factory = structlog.PrintLoggerFactory()
 
     structlog.configure(
         processors=[
@@ -30,8 +67,8 @@ def configure_logging(level: str = "INFO") -> None:
             logging.getLevelName(level.upper())
         ),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
+        logger_factory=logger_factory,
+        cache_logger_on_first_use=False,  # Allow reconfiguration
     )
 
 

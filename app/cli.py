@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.config import load_settings
@@ -21,6 +22,9 @@ from app.simple_planner import SimplePlanner
 from app.cli_output import CLIOutput, OutputFormat
 from app.utils.logging import configure_logging, get_logger
 from app.utils.routers import load_router_map
+
+# Log file location (excluded from git via .tmp/)
+CLI_LOG_FILE = Path(".tmp/cli.log")
 
 logger = get_logger(__name__)
 
@@ -199,9 +203,18 @@ Examples:
         output.info("Ensure .env file exists with GEMINI_API_KEY set")
         sys.exit(1)
 
-    # Configure logging
+    # Configure logging - redirect to file for clean CLI output
     log_level = "DEBUG" if args.verbose else settings.log_level
-    configure_logging(log_level)
+    CLI_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if CLI_LOG_FILE.exists():
+        CLI_LOG_FILE.unlink()  # Fresh log each session
+
+    # Verbose mode: logs to both console and file; normal mode: file only
+    configure_logging(
+        level=log_level,
+        log_file=CLI_LOG_FILE,
+        console=args.verbose,
+    )
 
     # Initialize MCP manager
     output.status("Starting MCP servers...")
