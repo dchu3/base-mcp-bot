@@ -203,6 +203,49 @@ class TestSafetyResult:
         assert "🚨" in result
         assert "DO NOT TRADE" in result
 
+    def test_format_safety_with_dict_flags(self) -> None:
+        """Test safety result with dict flags (honeypot MCP format)."""
+        result = format_safety_result(
+            {
+                "summary": {"verdict": "DO_NOT_TRADE", "reason": "Honeypot detected"},
+                "flags": {
+                    "isHoneypot": True,
+                    "simulationSuccess": True,
+                    "openSource": True,
+                },
+            }
+        )
+        assert "🚨" in result
+        assert "DO NOT TRADE" in result
+        assert "Honeypot detected" in result
+
+    def test_format_safety_with_dict_flags_unverified(self) -> None:
+        """Test safety result with unverified source flag."""
+        result = format_safety_result(
+            {
+                "summary": {"verdict": "CAUTION", "reason": "High risk"},
+                "flags": {
+                    "isHoneypot": False,
+                    "simulationSuccess": True,
+                    "openSource": False,
+                },
+            }
+        )
+        assert "⚠️" in result
+        assert "Contract source not verified" in result
+
+    def test_format_safety_with_list_flags(self) -> None:
+        """Test safety result with legacy list flags."""
+        result = format_safety_result(
+            {
+                "summary": {"verdict": "CAUTION", "reason": "Some risks"},
+                "flags": ["High gas fees", "Proxy contract"],
+            }
+        )
+        assert "⚠️" in result
+        assert "High gas fees" in result
+        assert "Proxy contract" in result
+
 
 class TestSafetyBadge:
     """Tests for compact safety badge formatting."""
