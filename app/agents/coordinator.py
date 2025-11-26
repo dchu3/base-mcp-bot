@@ -162,7 +162,15 @@ class CoordinatorAgent:
         summary = []
         for res in results:
             if "agent" in res:
-                summary.append(f"Agent {res['agent']}: {res['summary']}")
+                # Handle both success and error entries from agents
+                if "error" in res:
+                    summary.append(
+                        f"Agent {res['agent']}: Error - {res['error'][:100]}"
+                    )
+                else:
+                    summary.append(
+                        f"Agent {res['agent']}: {res.get('summary', 'Completed')}"
+                    )
             elif "call" in res:
                 call = res["call"]
                 if "error" in res:
