@@ -165,9 +165,10 @@ class SimplePlanner:
             )
 
         # Format top results
-        card = format_token_list(base_pairs, max_tokens=3)
+        max_results = context.get("max_results", 3)
+        card = format_token_list(base_pairs, max_tokens=max_results)
 
-        return PlannerResult(message=card, tokens=base_pairs[:5])
+        return PlannerResult(message=card, tokens=base_pairs[:max_results])
 
     async def _handle_trending(self, context: Dict[str, Any]) -> PlannerResult:
         """Handle trending tokens request."""
@@ -191,10 +192,11 @@ class SimplePlanner:
             )
 
         # Format list
+        max_results = context.get("max_results", 5)
         intro = "*🔥 Trending Tokens*\n\n"
-        card = format_token_list(base_tokens, max_tokens=5)
+        card = format_token_list(base_tokens, max_tokens=max_results)
 
-        return PlannerResult(message=intro + card, tokens=base_tokens[:5])
+        return PlannerResult(message=intro + card, tokens=base_tokens[:max_results])
 
     async def _handle_router_activity(
         self, matched: MatchedIntent, context: Dict[str, Any]
@@ -244,11 +246,12 @@ class SimplePlanner:
             )
 
         # Get full transaction details for recent swaps
+        max_results = context.get("max_results", 5)
         swap_txs = [
             tx
             for tx in transactions
             if "swap" in (tx.get("method") or tx.get("function") or "").lower()
-        ][:5]
+        ][:max_results]
 
         # Fetch full transaction details to get token transfers
         full_transactions = []
@@ -278,7 +281,7 @@ class SimplePlanner:
         token_data = []
         honeypot_results: Dict[str, Dict[str, Any]] = {}
 
-        for addr in token_addresses[:5]:  # Limit to 5 tokens
+        for addr in token_addresses[:max_results]:  # Limit to max_results tokens
             try:
                 logger.info("dexscreener_lookup", address=addr)
                 dex_result = await self.mcp_manager.dexscreener.call_tool(

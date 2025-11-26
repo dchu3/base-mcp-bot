@@ -90,10 +90,11 @@ async def run_interactive(
                 output.warning(f"Unknown command: {query}")
                 continue
 
-        # Build context with conversation history
+        # Build context with conversation history and CLI-specific settings
         context = {
             "conversation_history": conversation_history,
             "recent_tokens": recent_tokens,
+            "max_results": 50,  # CLI shows more results than Telegram
         }
 
         try:
@@ -231,7 +232,8 @@ Examples:
         if args.interactive:
             await run_interactive(planner, output)
         elif query:
-            await run_single_query(planner, query, output, context={})
+            # CLI shows more results than Telegram
+            await run_single_query(planner, query, output, context={"max_results": 50})
     except KeyboardInterrupt:
         output.info("\nInterrupted")
     finally:
