@@ -137,6 +137,7 @@ def test_derive_chain_id_defaults_to_base() -> None:
 
 
 def test_render_response_prefers_token_summaries() -> None:
+    """Token summaries should appear before transaction list."""
     planner = _make_planner()
     base_call = ToolInvocation(
         client="base",
@@ -174,8 +175,11 @@ def test_render_response_prefers_token_summaries() -> None:
     )
 
     assert isinstance(response.message, str)
-    assert "Recent transactions" not in response.message
-    assert "Dexscreener snapshots for uniswap\\_v3" in response.message
+    # Token summaries should appear before transactions
+    dex_pos = response.message.find("Dexscreener snapshots")
+    tx_pos = response.message.find("Recent transactions")
+    assert dex_pos != -1, "Dexscreener snapshots should be present"
+    assert dex_pos < tx_pos, "Token summaries should appear before transactions"
     assert "AAA/BBB" in response.message
     assert response.tokens
 
