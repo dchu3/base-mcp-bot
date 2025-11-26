@@ -446,7 +446,7 @@ class GeminiPlanner:
                 entry.get("params", {}),
                 context.get("network"),
             )
-            if client not in {"base", "dexscreener", "honeypot"} or not method:
+            if client not in {"base", "dexscreener", "honeypot", "websearch"} or not method:
                 continue
 
             # Skip if normalize_params returned empty dict (invalid params)
@@ -716,7 +716,7 @@ class GeminiPlanner:
                 entry.get("params", {}),
                 context.get("network"),
             )
-            if client not in {"base", "dexscreener", "honeypot"} or not method:
+            if client not in {"base", "dexscreener", "honeypot", "websearch"} or not method:
                 continue
 
             # Skip if normalize_params returned empty dict (invalid params)
@@ -1111,6 +1111,12 @@ class GeminiPlanner:
                 if not self.mcp_manager.honeypot:
                     raise RuntimeError("Honeypot MCP server is not configured")
                 result = await self.mcp_manager.honeypot.call_tool(
+                    call.method, call.params
+                )
+            elif call.client == "websearch":
+                if not self.mcp_manager.websearch:
+                    raise RuntimeError("Websearch MCP server is not configured")
+                result = await self.mcp_manager.websearch.call_tool(
                     call.method, call.params
                 )
             else:  # pragma: no cover - defensive guard

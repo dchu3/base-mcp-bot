@@ -447,7 +447,11 @@ class MCPManager:
     """Shared registry for configured MCP clients."""
 
     def __init__(
-        self, base_cmd: str, dexscreener_cmd: str, honeypot_cmd: str | None = None
+        self,
+        base_cmd: str,
+        dexscreener_cmd: str,
+        honeypot_cmd: str | None = None,
+        websearch_cmd: str | None = None,
     ) -> None:
         self.base = MCPClient("base", base_cmd)
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
@@ -456,17 +460,26 @@ class MCPManager:
             if honeypot_cmd and honeypot_cmd.strip()
             else None
         )
+        self.websearch = (
+            MCPClient("websearch", websearch_cmd)
+            if websearch_cmd and websearch_cmd.strip()
+            else None
+        )
 
     async def start(self) -> None:
         tasks = [self.base.start(), self.dexscreener.start()]
         if self.honeypot:
             tasks.append(self.honeypot.start())
+        if self.websearch:
+            tasks.append(self.websearch.start())
         await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
         tasks = [self.base.stop(), self.dexscreener.stop()]
         if self.honeypot:
             tasks.append(self.honeypot.stop())
+        if self.websearch:
+            tasks.append(self.websearch.stop())
         await asyncio.gather(*tasks)
 
     def get_available_tools(self) -> list[Dict[str, Any]]:
@@ -475,6 +488,8 @@ class MCPManager:
         clients = [self.base, self.dexscreener]
         if self.honeypot:
             clients.append(self.honeypot)
+        if self.websearch:
+            clients.append(self.websearch)
 
         for client in clients:
             for tool in client.tools:

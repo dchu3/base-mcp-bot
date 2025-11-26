@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default='bash -lc "cd ../base-mcp-honeypot && node dist/server.js stdio"',
         alias="MCP_HONEYPOT_CMD",
     )
+    mcp_websearch_cmd: str = Field(
+        default="",
+        alias="MCP_WEBSEARCH_CMD",
+    )
 
     default_lookback_minutes: int = Field(
         default=30,

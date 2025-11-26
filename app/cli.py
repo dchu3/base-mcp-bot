@@ -222,6 +222,7 @@ Examples:
         base_cmd=settings.mcp_base_server_cmd,
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         honeypot_cmd=settings.mcp_honeypot_cmd,
+        websearch_cmd=settings.mcp_websearch_cmd,
     )
 
     try:

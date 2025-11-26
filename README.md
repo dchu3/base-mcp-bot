@@ -1,6 +1,6 @@
 # base-mcp-bot
 
-Telegram bot for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, and Honeypot detection.
+Telegram bot for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, Honeypot detection, and web search.
 
 ## Features
 
@@ -49,6 +49,17 @@ Automatic safety checks on tokens including:
 - "Is 0x1234... safe?"
 - "Check honeypot for PEPE"
 
+### 🔍 Web Search
+Search the web for token project information, news, and background:
+- Project team and roadmap
+- Recent news and announcements
+- General crypto market trends
+
+**Example queries:**
+- "Tell me about the DEGEN project"
+- "What is BRETT token?"
+- "Latest news on Base ecosystem"
+
 ### 💬 Conversational Memory
 The bot remembers context from your conversation:
 - "What's PEPE doing?" → Shows token info
@@ -85,6 +96,7 @@ GEMINI_API_KEY=your_gemini_key
 MCP_BASE_SERVER_CMD="node /path/to/base-mcp-server/dist/index.js start"
 MCP_DEXSCREENER_CMD="node /path/to/mcp-dexscreener/index.js"
 MCP_HONEYPOT_CMD="bash -lc 'cd /path/to/base-mcp-honeypot && node dist/server.js stdio'"
+MCP_WEBSEARCH_CMD="uvx duckduckgo-mcp-server"
 
 # Optional
 GEMINI_MODEL=gemini-1.5-flash-latest
@@ -192,7 +204,11 @@ $ python -m app.cli --output json "trending" | jq '.tokens[0].symbol'
 
 - **SimplePlanner**: Pattern-based intent matching for common queries (router activity, token lookups)
 - **Gemini AI**: Handles complex/ambiguous queries that don't match patterns
-- **MCP Servers**: Blockscout (transactions), Dexscreener (token data), Honeypot (safety checks)
+- **MCP Servers**: 
+  - Blockscout (transactions)
+  - Dexscreener (token data)
+  - Honeypot (safety checks)
+  - DuckDuckGo (web search)
 - **Token Cards**: Consistent formatting with automatic Dexscreener enrichment
 - **Interfaces**: Telegram bot (with 4096 char limit) and CLI (unlimited output)
 
