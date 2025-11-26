@@ -366,20 +366,16 @@ class SimplePlanner:
             error_msg = str(exc).lower()
             if "404" in error_msg or "not found" in error_msg:
                 # Token not indexed in Honeypot API
-                card = (
-                    "*Safety Check*\n"
-                    "⚠️ *UNABLE TO VERIFY*\n"
-                    "This token is not indexed in the Honeypot database\\. "
-                    "Exercise caution and do your own research\\."
+                card = "*Safety Check*\n" "⚠️ *UNABLE TO VERIFY*\n" + escape_markdown(
+                    "This token is not indexed in the Honeypot database. "
+                    "Exercise caution and do your own research."
                 )
                 logger.info("honeypot_token_not_found", address=address)
             else:
                 # Other honeypot errors
-                card = (
-                    "*Safety Check*\n"
-                    "❓ *CHECK UNAVAILABLE*\n"
-                    "Unable to verify token safety at this time\\. "
-                    "Please try again later\\."
+                card = "*Safety Check*\n" "❓ *CHECK UNAVAILABLE*\n" + escape_markdown(
+                    "Unable to verify token safety at this time. "
+                    "Please try again later."
                 )
                 logger.warning("honeypot_check_error", address=address, error=str(exc))
 
