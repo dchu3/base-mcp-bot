@@ -38,8 +38,7 @@ def configure_logging(
         console_handler.setFormatter(logging.Formatter("%(message)s"))
         root_logger.addHandler(console_handler)
 
-    # Add file handler if specified (used by both stdlib and structlog)
-    file_handler: Optional[logging.FileHandler] = None
+    # Add file handler if specified
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file, mode="w")

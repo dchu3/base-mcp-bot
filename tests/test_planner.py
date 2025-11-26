@@ -179,6 +179,7 @@ def test_render_response_prefers_token_summaries() -> None:
     dex_pos = response.message.find("Dexscreener snapshots")
     tx_pos = response.message.find("Recent transactions")
     assert dex_pos != -1, "Dexscreener snapshots should be present"
+    assert tx_pos != -1, "Recent transactions should be present"
     assert dex_pos < tx_pos, "Token summaries should appear before transactions"
     assert "AAA/BBB" in response.message
     assert response.tokens
@@ -454,15 +455,15 @@ async def test_handle_chitchat_escapes_markdown() -> None:
     mock_part.text = "Hello! I can help you with tokens."
     mock_candidate.content.parts = [mock_part]
     mock_response.candidates = [mock_candidate]
-    
+
     # Mock generate_content to return the mock response
     planner.model.generate_content.return_value = mock_response
-    
+
     context = {"conversation_history": []}
     result = await planner._handle_chitchat("Hi", context)
-    
+
     # The text "Hello! I can help you with tokens." contains '!', which is reserved in MarkdownV2
     # It should be escaped to "Hello\! I can help you with tokens\."
-    
+
     assert "\\" in result.message
     assert result.message == "Hello\\! I can help you with tokens\\."

@@ -7,6 +7,7 @@ Unlike Telegram formatters, these have no message length restrictions.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -194,8 +195,6 @@ class CLIOutput:
             result = result.replace(f"\\{char}", char)
 
         # Convert Markdown links to plain text: [text](url) -> text (url)
-        import re
-
         result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", result)
 
         return result
