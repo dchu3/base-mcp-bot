@@ -5,11 +5,55 @@ from typing import Any, Dict, List, Optional
 from app.utils.formatting import escape_markdown, escape_markdown_url
 
 
-def format_token_card(token_data: Dict[str, Any]) -> str:
+def format_safety_badge(honeypot_data: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Format a compact safety badge from honeypot check result.
+
+    Args:
+        honeypot_data: Result from honeypot.check_token, or None.
+
+    Returns:
+        Single-line safety badge string, or None if no data.
+    """
+    if not honeypot_data:
+        return None
+
+    summary = honeypot_data.get("summary", {})
+    verdict = summary.get("verdict") or honeypot_data.get("verdict") or "UNKNOWN"
+    risk = summary.get("risk") or honeypot_data.get("risk")
+
+    # Get tax info if available
+    simulation = honeypot_data.get("simulationResult", {})
+    buy_tax = simulation.get("buyTax") or honeypot_data.get("buyTax")
+    sell_tax = simulation.get("sellTax") or honeypot_data.get("sellTax")
+
+    # Determine badge
+    if verdict in ("SAFE_TO_TRADE", "SAFE", "OK"):
+        badge = "✅ Safe"
+    elif verdict in ("CAUTION", "WARNING"):
+        badge = "⚠️ Caution"
+        # Add reason if we have high tax
+        if buy_tax and float(buy_tax) > 5:
+            badge += f" \\- Buy tax {buy_tax}%"
+        elif sell_tax and float(sell_tax) > 5:
+            badge += f" \\- Sell tax {sell_tax}%"
+        elif risk:
+            badge += f" \\- {escape_markdown(str(risk))}"
+    elif verdict in ("HONEYPOT", "DANGER", "DO_NOT_TRADE"):
+        badge = "🚨 Risk \\- Do not trade"
+    else:
+        badge = "❓ Unknown safety"
+
+    return badge
+
+
+def format_token_card(
+    token_data: Dict[str, Any], honeypot_data: Optional[Dict[str, Any]] = None
+) -> str:
     """Format Dexscreener token data as a Telegram card.
 
     Args:
         token_data: Raw token/pair data from Dexscreener.
+        honeypot_data: Optional honeypot check result.
 
     Returns:
         Formatted Telegram MarkdownV2 message.
@@ -79,6 +123,11 @@ def format_token_card(token_data: Dict[str, Any]) -> str:
     if address:
         short_addr = f"{address[:6]}...{address[-4:]}"
         lines.append(f"📍 `{short_addr}`")
+
+    # Safety badge (if honeypot data provided)
+    safety_badge = format_safety_badge(honeypot_data)
+    if safety_badge:
+        lines.append(safety_badge)
 
     # Dexscreener link
     if dex_url:
@@ -192,6 +241,7 @@ def format_swap_activity(
     tokens: List[Dict[str, Any]],
     transactions: List[Dict[str, Any]],
     router_name: Optional[str] = None,
+    honeypot_results: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> str:
     """Format swap activity with token cards.
 
@@ -202,11 +252,13 @@ def format_swap_activity(
         tokens: List of token/pair data from Dexscreener lookups.
         transactions: List of transaction data from Blockscout.
         router_name: Name of the router (e.g., "Uniswap V2").
+        honeypot_results: Optional dict mapping token address to honeypot check result.
 
     Returns:
         Formatted Telegram MarkdownV2 message.
     """
     lines = []
+    honeypot_results = honeypot_results or {}
 
     # Title
     title = f"🔄 *Recent {escape_markdown(router_name or 'DEX')} Swaps*"
@@ -216,7 +268,14 @@ def format_swap_activity(
     # Show token cards
     if tokens:
         for token in tokens[:5]:
-            card = format_token_card(token)
+            # Get honeypot data for this token
+            base_token = token.get("baseToken", {})
+            address = (
+                base_token.get("address") or token.get("tokenAddress") or ""
+            ).lower()
+            honeypot_data = honeypot_results.get(address)
+
+            card = format_token_card(token, honeypot_data)
             lines.append(card)
             lines.append("")
     else:
