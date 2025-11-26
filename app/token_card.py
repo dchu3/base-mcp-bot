@@ -281,7 +281,11 @@ def format_safety_result(honeypot_data: Dict[str, Any]) -> str:
 
 
 def _format_number(value: Any) -> str:
-    """Format a number with K/M/B suffixes."""
+    """Format a number with K/M/B suffixes.
+
+    Note: This function expects non-negative values (prices, volumes, etc.).
+    Negative values are not expected in token metrics.
+    """
     if value is None or value == "?":
         return "?"
 

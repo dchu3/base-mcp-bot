@@ -113,7 +113,7 @@ class SimplePlanner:
 
         # Optionally add AI insight
         if self.enable_ai_insights and len(pairs) > 0:
-            insight = await self._generate_insight(best_pair, "token lookup")
+            insight = await self._generate_insight(best_pair)
             if insight:
                 card += f"\n\n💡 _{escape_markdown(insight)}_"
 
@@ -353,9 +353,7 @@ Keep your response brief (2-3 sentences). Be helpful and friendly."""
                 tokens=[],
             )
 
-    async def _generate_insight(
-        self, token_data: Dict[str, Any], context_type: str
-    ) -> Optional[str]:
+    async def _generate_insight(self, token_data: Dict[str, Any]) -> Optional[str]:
         """Generate a brief AI insight about the token."""
         if not self.enable_ai_insights:
             return None

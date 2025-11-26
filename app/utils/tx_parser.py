@@ -39,14 +39,6 @@ def extract_tokens_from_transactions(transactions: List[Dict[str, Any]]) -> List
     addresses: Set[str] = set()
 
     for tx in transactions:
-        method = tx.get("method") or tx.get("function") or tx.get("name") or ""
-
-        # Check if it's a swap transaction (more lenient matching)
-        is_swap = any(swap_method in method for swap_method in SWAP_METHODS)
-        if not is_swap and "swap" not in method.lower():
-            # Still try to extract from token_transfers even if method doesn't match
-            pass
-
         # Extract addresses from decoded input (various field names)
         decoded = (
             tx.get("decoded_input")
@@ -194,7 +186,7 @@ def _filter_addresses(addresses: Set[str]) -> Set[str]:
         hex_part = addr_lower[2:]  # Remove 0x
         leading_zeros = len(hex_part) - len(hex_part.lstrip("0"))
 
-        # Real token addresses typically don't have more than 10 leading zeros
+        # Real token addresses typically don't have more than 16 leading zeros
         # Addresses with many leading zeros are usually small numbers (parameters)
         if leading_zeros > 16:
             continue
