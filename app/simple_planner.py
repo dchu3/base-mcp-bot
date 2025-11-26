@@ -11,9 +11,11 @@ from app.token_card import (
     format_token_list,
     format_activity_summary,
     format_safety_result,
+    format_swap_activity,
 )
 from app.utils.formatting import escape_markdown
 from app.utils.logging import get_logger
+from app.utils.tx_parser import extract_tokens_from_transactions
 
 logger = get_logger(__name__)
 
@@ -191,16 +193,53 @@ class SimplePlanner:
                 tokens=[],
             )
 
-        # Call Blockscout
+        # Call Blockscout for transactions
         result = await self.mcp_manager.base.call_tool(
             "getDexRouterActivity",
             {"router": router_address, "sinceMinutes": 60},
         )
 
         transactions = self._extract_transactions(result)
-        card = format_activity_summary(transactions, router_name.title())
 
-        return PlannerResult(message=card, tokens=[])
+        if not transactions:
+            return PlannerResult(
+                message=escape_markdown(
+                    f"No recent activity found on {router_name.title()}."
+                ),
+                tokens=[],
+            )
+
+        # Extract token addresses from swap transactions
+        token_addresses = extract_tokens_from_transactions(transactions)
+        logger.info(
+            "extracted_tokens",
+            count=len(token_addresses),
+            addresses=token_addresses[:5],
+        )
+
+        # Look up tokens on Dexscreener
+        token_data = []
+        for addr in token_addresses[:5]:  # Limit to 5 tokens
+            try:
+                dex_result = await self.mcp_manager.dexscreener.call_tool(
+                    "getPairsByToken",
+                    {"chainId": self.chain_id, "tokenAddress": addr},
+                )
+                pairs = self._extract_pairs(dex_result)
+                if pairs:
+                    # Add the best pair for this token
+                    token_data.append(pairs[0])
+            except Exception as exc:
+                logger.warning("token_lookup_failed", address=addr, error=str(exc))
+
+        # Format with token cards
+        if token_data:
+            card = format_swap_activity(token_data, transactions, router_name.title())
+        else:
+            # Fallback to simple summary if no token data
+            card = format_activity_summary(transactions, router_name.title())
+
+        return PlannerResult(message=card, tokens=token_data)
 
     async def _handle_safety_check(
         self, matched: MatchedIntent, context: Dict[str, Any]

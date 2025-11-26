@@ -143,6 +143,44 @@ class TestActivitySummary:
         assert "No recent activity" in result
 
 
+class TestSwapActivity:
+    """Tests for swap activity formatting."""
+
+    def test_format_swap_activity_with_tokens(self) -> None:
+        """Test swap activity with token data."""
+        from app.token_card import format_swap_activity
+
+        tokens = [
+            {
+                "baseToken": {"symbol": "PEPE", "name": "Pepe", "address": "0x1234"},
+                "priceUsd": "0.00001",
+                "priceChange": {"h24": 10.5},
+                "liquidity": {"usd": 1000000},
+                "chainId": "base",
+            }
+        ]
+        transactions = [
+            {"method": "swapExactETHForTokens"},
+            {"method": "swapExactETHForTokens"},
+        ]
+
+        result = format_swap_activity(tokens, transactions, "Uniswap V2")
+
+        assert "Uniswap V2" in result
+        assert "PEPE" in result
+        assert "2 swaps" in result
+        assert "DYOR" in result
+
+    def test_format_swap_activity_no_tokens(self) -> None:
+        """Test swap activity without token data."""
+        from app.token_card import format_swap_activity
+
+        result = format_swap_activity([], [{"method": "swap"}], "Aerodrome")
+
+        assert "Aerodrome" in result
+        assert "No token data" in result
+
+
 class TestSafetyResult:
     """Tests for safety result formatting."""
 

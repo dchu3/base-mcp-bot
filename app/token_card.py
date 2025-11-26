@@ -188,6 +188,58 @@ def format_activity_summary(
     return "\n".join(lines)
 
 
+def format_swap_activity(
+    tokens: List[Dict[str, Any]],
+    transactions: List[Dict[str, Any]],
+    router_name: Optional[str] = None,
+) -> str:
+    """Format swap activity with token cards.
+
+    Shows the tokens that were swapped with their Dexscreener data,
+    followed by a transaction summary.
+
+    Args:
+        tokens: List of token/pair data from Dexscreener lookups.
+        transactions: List of transaction data from Blockscout.
+        router_name: Name of the router (e.g., "Uniswap V2").
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    lines = []
+
+    # Title
+    title = f"🔄 *Recent {escape_markdown(router_name or 'DEX')} Swaps*"
+    lines.append(title)
+    lines.append("")
+
+    # Show token cards
+    if tokens:
+        for token in tokens[:5]:
+            card = format_token_card(token)
+            lines.append(card)
+            lines.append("")
+    else:
+        lines.append(escape_markdown("No token data available for recent swaps."))
+        lines.append("")
+
+    # Transaction summary
+    swap_count = sum(
+        1
+        for tx in transactions
+        if "swap" in (tx.get("method") or tx.get("function") or "").lower()
+    )
+
+    if swap_count > 0:
+        lines.append(escape_markdown(f"📊 {swap_count} swaps in the last hour"))
+
+    # Add disclaimer
+    lines.append("")
+    lines.append(escape_markdown("⚠️ DYOR - Not financial advice"))
+
+    return "\n".join(lines)
+
+
 def format_safety_result(honeypot_data: Dict[str, Any]) -> str:
     """Format honeypot check result.
 
