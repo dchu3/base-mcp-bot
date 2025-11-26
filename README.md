@@ -1,53 +1,144 @@
 # base-mcp-bot
 
-Telegram bot that uses Gemini function planning to orchestrate Base and Dexscreener MCP servers.
+Telegram bot for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, and Honeypot detection.
 
-## Getting started
+## Features
+
+### 🔄 DEX Router Activity
+Monitor real-time swap activity across multiple DEXs on Base:
+
+| DEX | Versions | Aliases |
+|-----|----------|---------|
+| Uniswap | V2, V3, V4 | `uni`, `uniswap` |
+| Aerodrome | V2 | `aero`, `aerodrome` |
+| PancakeSwap | V2, V3 | `cake`, `pancake` |
+| SushiSwap | V2 | `sushi`, `sushiswap` |
+
+**Example queries:**
+- "Show me recent Uniswap swaps"
+- "What's happening on Aerodrome?"
+- "Show me PancakeSwap V3 activity"
+
+### 🪙 Token Cards
+When viewing DEX activity, tokens are displayed in rich cards showing:
+- **Price** with 24h change percentage
+- **Liquidity** and **Volume** stats
+- **Fully Diluted Valuation (FDV)**
+- **Safety badge** from Honeypot analysis (✅ Safe / ⚠️ Caution / 🚨 Danger)
+- **Tax info** (buy/sell percentages if applicable)
+- **Direct link** to Dexscreener
+
+Example card:
+```
+SURGE
+💰 Price: $0.038980 (📉 -20.4%)
+💧 Liq: $586.74K · 📊 Vol: $256.64K
+📈 FDV: $38.98M
+✅ Safe
+📍 0xedB6...7b4D
+View on Dexscreener
+```
+
+### 🛡️ Honeypot Detection
+Automatic safety checks on tokens including:
+- Buy/sell tax percentages
+- Honeypot risk assessment
+- Transfer restrictions
+
+**Example queries:**
+- "Is 0x1234... safe?"
+- "Check honeypot for PEPE"
+
+### 💬 Conversational Memory
+The bot remembers context from your conversation:
+- "What's PEPE doing?" → Shows token info
+- "Is it safe?" → Runs honeypot check on PEPE
+- "Tell me more" → Provides additional details
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show what the bot can do |
+| `/routers` | View available DEX routers and aliases |
+| `/history` | View recent conversation history |
+| `/clear` | Clear conversation and start fresh |
+
+## Getting Started
+
+### Installation
 
 ```bash
 ./scripts/install.sh
 source .venv/bin/activate
 ```
 
-Populate `.env` with your Telegram bot token, Gemini API key (and optional `GEMINI_MODEL` override), MCP server commands (for example `node ../base-mcp-server/dist/index.js start`, `node /path/to/mcp-dexscreener/index.js`, and `bash -lc 'cd /path/to/base-mcp-honeypot && node dist/server.js stdio'` for the honeypot server), `PLANNER_PROMPT_FILE` (defaults to `./prompts/planner.md`), and (optionally) `TELEGRAM_CHAT_ID` to lock the bot to a single chat before starting the bot.
+### Configuration
 
-### Run the bot
+Create a `.env` file with:
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token
+GEMINI_API_KEY=your_gemini_key
+
+# MCP server commands
+MCP_BASE_CMD="node /path/to/base-mcp-server/dist/index.js start"
+MCP_DEXSCREENER_CMD="node /path/to/mcp-dexscreener/index.js"
+MCP_HONEYPOT_CMD="node /path/to/base-mcp-honeypot/dist/server.js stdio"
+
+# Optional
+GEMINI_MODEL=gemini-2.0-flash-exp
+TELEGRAM_CHAT_ID=123456789  # Lock bot to single chat
+PLANNER_PROMPT_FILE=./prompts/planner.md
+```
+
+### Run the Bot
 
 ```bash
 ./scripts/start.sh
 ```
 
-The bot launches the Base, Dexscreener, and Honeypot MCP servers and listens for natural language requests. It uses a Gemini-powered planner to dynamically select the right tools for your questions.
+The bot launches the MCP servers and listens for natural language requests.
 
-**Example interactions:**
-- "What's PEPE doing?"
-- "Show me recent Uniswap activity"
-- "Check honeypot for ZORA"
-- "What are the top tokens on Base?"
-- "Tell me more about that token" (uses conversation context)
+## Example Interactions
 
-### Features
+```
+You: Show me recent Uniswap V2 swaps
+Bot: 🔄 Recent Uniswap V2 Swaps
+     [Token cards with prices, liquidity, safety badges...]
 
-- **Dynamic Tool Discovery**: The bot automatically learns available tools from connected MCP servers at startup. No manual configuration required when adding new tools.
-- **Conversational Memory**: Remembers recent tokens and context, allowing for follow-up questions like "Is it safe?" or "Check the second one".
-- **Intent Classification**: Distinguishes between casual chitchat and tool-based requests to save costs and reduce latency.
-- **Safety Checks**: Automatically integrates Honeypot checks when analyzing tokens, with forced refinement if safety data is missing.
-- **Structured Output**: Uses Gemini's native JSON mode for reliable and robust plan generation.
+You: What about Aerodrome?
+Bot: 🔄 Recent Aerodrome V2 Swaps
+     [Token cards...]
 
-### Commands
+You: Is the first token safe?
+Bot: ✅ Safe - No honeypot detected
+     Buy Tax: 0% | Sell Tax: 0%
 
-- `/history` — View recent conversation history.
-- `/clear` — Clear conversation history and start fresh.
-- `/help` — Show available commands and capabilities.
+You: /routers
+Bot: 📊 Available DEX Routers
+     Uniswap: V2, V3, V4
+     Aerodrome: V2
+     ...
+```
 
-### Prompt template
+## Architecture
 
-Edit `prompts/planner.md` (or point `PLANNER_PROMPT_FILE` elsewhere) to tune how the Gemini planner selects tools. The `$tool_definitions` placeholder is automatically populated with the live capabilities of your connected MCP servers.
+- **SimplePlanner**: Pattern-based intent matching for common queries (router activity, token lookups)
+- **Gemini AI**: Handles complex/ambiguous queries that don't match patterns
+- **MCP Servers**: Blockscout (transactions), Dexscreener (token data), Honeypot (safety checks)
+- **Token Cards**: Consistent formatting with automatic Dexscreener enrichment
 
-### Tests & linting
+## Development
+
+### Tests & Linting
 
 ```bash
-.venv/bin/pytest
+pytest
 ruff check
 black --check .
 ```
+
+### Prompt Customization
+
+Edit `prompts/planner.md` to customize how the Gemini planner handles queries. The `$tool_definitions` placeholder is automatically populated with MCP server capabilities.
