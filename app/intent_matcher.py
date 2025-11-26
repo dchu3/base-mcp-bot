@@ -34,7 +34,7 @@ class MatchedIntent:
 # Regex patterns
 ADDRESS_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
 TRENDING_KEYWORDS = {"trending", "hot", "popular", "top", "boosted", "movers"}
-ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume"}
+ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume", "transfers"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
 
 
