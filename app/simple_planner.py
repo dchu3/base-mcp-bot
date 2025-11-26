@@ -15,6 +15,11 @@ from app.token_card import (
 )
 from app.utils.formatting import escape_markdown
 from app.utils.logging import get_logger
+from app.utils.routers import (
+    DEFAULT_ROUTERS,
+    get_router_display_name,
+    match_router_name,
+)
 from app.utils.tx_parser import extract_tokens_from_transactions
 
 logger = get_logger(__name__)
@@ -195,16 +200,31 @@ class SimplePlanner:
         self, matched: MatchedIntent, context: Dict[str, Any]
     ) -> PlannerResult:
         """Handle DEX router activity request."""
-        router_name = matched.router_name or "uniswap"
-        logger.info("router_activity", router=router_name)
+        # Use router_key if available, otherwise try to match from router_name
+        router_key = matched.router_key
+        if not router_key and matched.router_name:
+            router_key = match_router_name(matched.router_name)
+        if not router_key:
+            router_key = "uniswap_v2"  # Default
 
-        # Get router address
-        router_address = self._get_router_address(router_name)
-        if not router_address:
+        display_name = get_router_display_name(router_key)
+        logger.info("router_activity", router=router_key, display_name=display_name)
+
+        # Get router address from config
+        router_networks = DEFAULT_ROUTERS.get(router_key)
+        if not router_networks:
             return PlannerResult(
                 message=escape_markdown(
-                    f"Router '{router_name}' not configured. "
-                    "Available: uniswap_v2, uniswap_v3, aerodrome"
+                    f"Router '{router_key}' not found. Use /routers to see available options."
+                ),
+                tokens=[],
+            )
+
+        router_address = router_networks.get("base-mainnet")
+        if not router_address or router_address == "0x" + "0" * 40:
+            return PlannerResult(
+                message=escape_markdown(
+                    f"Router '{display_name}' not available on Base mainnet."
                 ),
                 tokens=[],
             )
@@ -219,9 +239,7 @@ class SimplePlanner:
 
         if not transactions:
             return PlannerResult(
-                message=escape_markdown(
-                    f"No recent activity found on {router_name.title()}."
-                ),
+                message=escape_markdown(f"No recent activity found on {display_name}."),
                 tokens=[],
             )
 
@@ -302,11 +320,11 @@ class SimplePlanner:
         # Format with token cards
         if token_data:
             card = format_swap_activity(
-                token_data, transactions, router_name.title(), honeypot_results
+                token_data, transactions, display_name, honeypot_results
             )
         else:
             # Fallback to simple summary if no token data
-            card = format_activity_summary(transactions, router_name.title())
+            card = format_activity_summary(transactions, display_name)
 
         return PlannerResult(message=card, tokens=token_data)
 
@@ -419,25 +437,6 @@ Be concise and factual. No financial advice. Just observation."""
         except Exception as exc:
             logger.warning("insight_generation_failed", error=str(exc))
             return None
-
-    def _get_router_address(self, router_name: str) -> Optional[str]:
-        """Get router address from config."""
-        # Normalize router name
-        name_map = {
-            "uniswap": "uniswap_v2",
-            "uniswap_v2": "uniswap_v2",
-            "uniswap_v3": "uniswap_v3",
-            "aerodrome": "aerodrome",
-            "baseswap": "baseswap",
-            "sushi": "sushiswap",
-            "sushiswap": "sushiswap",
-        }
-        normalized = name_map.get(router_name.lower())
-        if not normalized:
-            return None
-
-        router_networks = self.router_map.get(normalized, {})
-        return router_networks.get("base-mainnet") or router_networks.get("base")
 
     def _extract_pairs(self, result: Any) -> List[Dict[str, Any]]:
         """Extract pairs from Dexscreener result."""
