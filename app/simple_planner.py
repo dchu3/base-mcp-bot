@@ -357,11 +357,31 @@ class SimplePlanner:
         logger.info("safety_check", address=address)
 
         # Call Honeypot
-        result = await self.mcp_manager.honeypot.call_tool(
-            "check_token", {"address": address, "chainId": 8453}
-        )
-
-        card = format_safety_result(result)
+        try:
+            result = await self.mcp_manager.honeypot.call_tool(
+                "check_token", {"address": address, "chainId": 8453}
+            )
+            card = format_safety_result(result)
+        except Exception as exc:
+            error_msg = str(exc).lower()
+            if "404" in error_msg or "not found" in error_msg:
+                # Token not indexed in Honeypot API
+                card = (
+                    "*Safety Check*\n"
+                    "⚠️ *UNABLE TO VERIFY*\n"
+                    "This token is not indexed in the Honeypot database\\. "
+                    "Exercise caution and do your own research\\."
+                )
+                logger.info("honeypot_token_not_found", address=address)
+            else:
+                # Other honeypot errors
+                card = (
+                    "*Safety Check*\n"
+                    "❓ *CHECK UNAVAILABLE*\n"
+                    "Unable to verify token safety at this time\\. "
+                    "Please try again later\\."
+                )
+                logger.warning("honeypot_check_error", address=address, error=str(exc))
 
         # Also get token info for context
         dex_result = await self.mcp_manager.dexscreener.call_tool(
