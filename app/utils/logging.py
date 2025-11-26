@@ -38,7 +38,8 @@ def configure_logging(
         console_handler.setFormatter(logging.Formatter("%(message)s"))
         root_logger.addHandler(console_handler)
 
-    # Add file handler if specified
+    # Add file handler if specified (used by both stdlib and structlog)
+    file_handler: Optional[logging.FileHandler] = None
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_file, mode="w")
@@ -46,14 +47,7 @@ def configure_logging(
         file_handler.setFormatter(logging.Formatter("%(message)s"))
         root_logger.addHandler(file_handler)
 
-    # Determine output target for structlog
-    if log_file and not console:
-        # File only - use file logger factory
-        logger_factory = structlog.WriteLoggerFactory(file=log_file.open("a"))
-    else:
-        # Console (with or without file)
-        logger_factory = structlog.PrintLoggerFactory()
-
+    # Configure structlog to use stdlib logging (avoids file handle leaks)
     structlog.configure(
         processors=[
             structlog.threadlocal.merge_threadlocal_context,
@@ -67,7 +61,7 @@ def configure_logging(
             logging.getLevelName(level.upper())
         ),
         context_class=dict,
-        logger_factory=logger_factory,
+        logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,  # Allow reconfiguration
     )
 

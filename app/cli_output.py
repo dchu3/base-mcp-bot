@@ -188,7 +188,8 @@ class CLIOutput:
         result = text
 
         # Remove backslash escapes (Telegram MarkdownV2)
-        escape_chars = r"\_*[]()~`>#+-=|{}.!"
+        # These are characters that Telegram requires escaping
+        escape_chars = r"\_*[]()~`>#+-=|{}.!$"
         for char in escape_chars:
             result = result.replace(f"\\{char}", char)
 
