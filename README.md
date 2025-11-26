@@ -92,7 +92,7 @@ TELEGRAM_CHAT_ID=123456789  # Lock bot to single chat
 PLANNER_PROMPT_FILE=./prompts/planner.md
 ```
 
-### Run the Bot
+### Run the Telegram Bot
 
 ```bash
 ./scripts/start.sh
@@ -100,7 +100,49 @@ PLANNER_PROMPT_FILE=./prompts/planner.md
 
 The bot launches the MCP servers and listens for natural language requests.
 
+### Run the CLI
+
+The CLI provides the same functionality without Telegram, with **no message length restrictions**:
+
+```bash
+# Single query
+python -m app.cli "show me uniswap activity"
+
+# Interactive mode (REPL with conversation memory)
+python -m app.cli --interactive
+
+# JSON output for scripting
+python -m app.cli --output json "trending tokens"
+
+# Verbose mode for debugging
+python -m app.cli --verbose "check 0x..."
+
+# Read query from stdin
+echo "show me PEPE" | python -m app.cli --stdin
+```
+
+**CLI Options:**
+
+| Option | Description |
+|--------|-------------|
+| `-i, --interactive` | Start interactive REPL mode |
+| `-o, --output {text,json,rich}` | Output format (default: text) |
+| `-v, --verbose` | Show debug information |
+| `--stdin` | Read query from stdin |
+| `--no-ai` | Disable AI insights/synthesis |
+
+**Interactive Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/quit` | Exit the CLI |
+| `/clear` | Clear conversation context |
+| `/routers` | List available DEX routers |
+| `/help` | Show available commands |
+
 ## Example Interactions
+
+### Telegram Bot
 
 ```
 You: Show me recent Uniswap V2 swaps
@@ -122,12 +164,37 @@ Bot: 📊 Available DEX Routers
      ...
 ```
 
+### CLI
+
+```bash
+$ python -m app.cli "show me uniswap activity"
+⏳ Starting MCP servers...
+⏳ MCP servers ready
+⏳ Processing: show me uniswap activity
+
+🔄 Recent Uniswap V2 Swaps
+
+📊 PEPE/WETH
+   Price: $0.00001234  |  24h: +15.2%
+   Volume: $1.2M | Liquidity: $500K
+   Safety: ✅ SAFE_TO_TRADE
+   🔗 https://dexscreener.com/base/0x...
+
+📊 WOJAK/USDC
+   Price: $0.0012  |  24h: -8.3%
+   ...
+
+$ python -m app.cli --output json "trending" | jq '.tokens[0].symbol'
+"PEPE"
+```
+
 ## Architecture
 
 - **SimplePlanner**: Pattern-based intent matching for common queries (router activity, token lookups)
 - **Gemini AI**: Handles complex/ambiguous queries that don't match patterns
 - **MCP Servers**: Blockscout (transactions), Dexscreener (token data), Honeypot (safety checks)
 - **Token Cards**: Consistent formatting with automatic Dexscreener enrichment
+- **Interfaces**: Telegram bot (with 4096 char limit) and CLI (unlimited output)
 
 ## Development
 
