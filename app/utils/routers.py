@@ -88,7 +88,7 @@ ROUTER_ALIAS_GROUPS: Dict[str, List[str]] = {
     "uniswap_v3": ["uni v3", "uniswap v3"],
     "uniswap_v4": ["uni v4", "uniswap v4"],
     "pancakeswap_v2": ["cake", "pancake"],
-    "pancakeswap_v3": ["pancake v3"],
+    "pancakeswap_v3": ["pancake v3", "pancakeswap v3"],
     "sushiswap_v2": ["sushi", "sushiswap"],
 }
 
