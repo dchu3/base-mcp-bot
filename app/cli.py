@@ -98,7 +98,7 @@ async def run_interactive(
         context = {
             "conversation_history": conversation_history,
             "recent_tokens": recent_tokens,
-            "max_results": 50,  # CLI shows more results than Telegram
+            "max_results": 20,  # CLI shows more results than Telegram
         }
 
         try:
@@ -246,7 +246,7 @@ Examples:
             await run_interactive(planner, output)
         elif query:
             # CLI shows more results than Telegram
-            await run_single_query(planner, query, output, context={"max_results": 50})
+            await run_single_query(planner, query, output, context={"max_results": 20})
     except KeyboardInterrupt:
         output.info("\nInterrupted")
     finally:
