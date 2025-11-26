@@ -39,38 +39,69 @@ def extract_tokens_from_transactions(transactions: List[Dict[str, Any]]) -> List
     addresses: Set[str] = set()
 
     for tx in transactions:
-        method = tx.get("method") or tx.get("function") or ""
+        method = tx.get("method") or tx.get("function") or tx.get("name") or ""
 
-        # Check if it's a swap transaction
+        # Check if it's a swap transaction (more lenient matching)
         is_swap = any(swap_method in method for swap_method in SWAP_METHODS)
         if not is_swap and "swap" not in method.lower():
-            continue
+            # Still try to extract from token_transfers even if method doesn't match
+            pass
 
-        # Extract addresses from decoded input
-        decoded = tx.get("decoded_input") or tx.get("decodedInput") or {}
+        # Extract addresses from decoded input (various field names)
+        decoded = (
+            tx.get("decoded_input")
+            or tx.get("decodedInput")
+            or tx.get("decoded")
+            or tx.get("parameters")
+            or {}
+        )
         if isinstance(decoded, dict):
             addresses.update(_extract_addresses_from_decoded(decoded))
 
+        # Also check if decoded is in a nested 'result' field
+        if isinstance(tx.get("result"), dict):
+            addresses.update(_extract_addresses_from_decoded(tx["result"]))
+
         # Extract from raw input data if available
-        raw_input = tx.get("input") or tx.get("raw_input") or ""
+        raw_input = tx.get("input") or tx.get("raw_input") or tx.get("data") or ""
         if raw_input and len(raw_input) > 10:
             addresses.update(_extract_addresses_from_raw(raw_input))
 
-        # Extract from token transfers in the transaction
-        transfers = tx.get("token_transfers") or tx.get("tokenTransfers") or []
+        # Extract from token transfers in the transaction (various field names)
+        transfers = (
+            tx.get("token_transfers")
+            or tx.get("tokenTransfers")
+            or tx.get("transfers")
+            or []
+        )
         for transfer in transfers:
-            token_addr = transfer.get("token_address") or transfer.get("tokenAddress")
+            token_addr = (
+                transfer.get("token_address")
+                or transfer.get("tokenAddress")
+                or transfer.get("token", {}).get("address")
+                or transfer.get("address")
+            )
             if token_addr:
                 addresses.add(token_addr.lower())
 
+            # Also check nested token object
+            token_obj = transfer.get("token", {})
+            if isinstance(token_obj, dict) and token_obj.get("address"):
+                addresses.add(token_obj["address"].lower())
+
         # Extract from logs if available
-        logs = tx.get("logs") or []
+        logs = tx.get("logs") or tx.get("receipt", {}).get("logs") or []
         for log in logs:
             # Transfer event topic
             if log.get("topics") and len(log["topics"]) > 0:
                 # Look for addresses in log data
                 log_data = log.get("data") or ""
                 addresses.update(_extract_addresses_from_raw(log_data))
+
+            # Also check log address (contract that emitted the event)
+            log_addr = log.get("address")
+            if log_addr and ADDRESS_PATTERN.match(log_addr):
+                addresses.add(log_addr.lower())
 
     # Filter out common non-token addresses (routers, WETH, etc.)
     filtered = _filter_addresses(addresses)

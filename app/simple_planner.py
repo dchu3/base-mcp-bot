@@ -209,8 +209,31 @@ class SimplePlanner:
                 tokens=[],
             )
 
-        # Extract token addresses from swap transactions
-        token_addresses = extract_tokens_from_transactions(transactions)
+        # Get full transaction details for recent swaps
+        swap_txs = [
+            tx
+            for tx in transactions
+            if "swap" in (tx.get("method") or tx.get("function") or "").lower()
+        ][:5]
+
+        # Fetch full transaction details to get token transfers
+        full_transactions = []
+        for tx in swap_txs:
+            tx_hash = tx.get("hash") or tx.get("transaction_hash")
+            if tx_hash:
+                try:
+                    full_tx = await self.mcp_manager.base.call_tool(
+                        "getTransactionByHash", {"hash": tx_hash}
+                    )
+                    if full_tx:
+                        full_transactions.append(full_tx)
+                except Exception as exc:
+                    logger.warning("tx_fetch_failed", hash=tx_hash, error=str(exc))
+
+        logger.info("fetched_full_txs", count=len(full_transactions))
+
+        # Extract token addresses from full transaction data
+        token_addresses = extract_tokens_from_transactions(full_transactions)
         logger.info(
             "extracted_tokens",
             count=len(token_addresses),
