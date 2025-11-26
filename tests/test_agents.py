@@ -256,3 +256,127 @@ class TestCoordinatorIntegration:
 
         mock_coordinator.agents["discovery"].run.assert_called_once()
         assert "Found tokens" in result.message
+
+
+class TestDiscoveryAgent:
+    """Tests for DiscoveryAgent."""
+
+    def test_chain_id_passed_to_prompt(self, mock_mcp) -> None:
+        """Test that chain_id is passed correctly to the prompt."""
+        from app.agents.discovery import DiscoveryAgent
+
+        model = MagicMock()
+        agent = DiscoveryAgent(model, mock_mcp)
+
+        # Mock _load_prompt to capture arguments
+        agent._load_prompt = MagicMock(return_value="mocked prompt")
+        agent._generate_content = AsyncMock(
+            return_value='{"reasoning": "test", "tools": []}'
+        )
+
+        ctx = AgentContext(message="find 0x1234", network="base")
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(agent.run(ctx))
+
+        # Verify chain_id was passed
+        agent._load_prompt.assert_called_once()
+        call_kwargs = agent._load_prompt.call_args[1]
+        assert call_kwargs["chain_id"] == "base"
+        assert call_kwargs["message"] == "find 0x1234"
+
+    def test_chain_id_normalizes_base_mainnet(self, mock_mcp) -> None:
+        """Test that base-mainnet normalizes to base."""
+        from app.agents.discovery import DiscoveryAgent
+
+        model = MagicMock()
+        agent = DiscoveryAgent(model, mock_mcp)
+
+        agent._load_prompt = MagicMock(return_value="mocked prompt")
+        agent._generate_content = AsyncMock(
+            return_value='{"reasoning": "test", "tools": []}'
+        )
+
+        ctx = AgentContext(message="find token", network="base-mainnet")
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(agent.run(ctx))
+
+        call_kwargs = agent._load_prompt.call_args[1]
+        assert call_kwargs["chain_id"] == "base"
+
+
+class TestMarketAgent:
+    """Tests for MarketAgent."""
+
+    def test_router_addresses_formatted(self, mock_mcp) -> None:
+        """Test that router addresses are formatted correctly in prompt."""
+        from app.agents.market import MarketAgent
+
+        model = MagicMock()
+        agent = MarketAgent(model, mock_mcp)
+
+        agent._load_prompt = MagicMock(return_value="mocked prompt")
+        agent._generate_content = AsyncMock(
+            return_value='{"reasoning": "test", "tools": []}'
+        )
+
+        ctx = AgentContext(
+            message="show activity",
+            network="base",
+            router_map={
+                "uniswap_v2": {"base-mainnet": "0xUNI"},
+                "aerodrome": {"base-mainnet": "0xAERO"},
+            },
+        )
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(agent.run(ctx))
+
+        call_kwargs = agent._load_prompt.call_args[1]
+        routers = call_kwargs["routers"]
+        assert "uniswap_v2: 0xUNI" in routers
+        assert "aerodrome: 0xAERO" in routers
+
+
+class TestSafetyAgent:
+    """Tests for SafetyAgent."""
+
+    def test_found_tokens_formatted(self, mock_mcp) -> None:
+        """Test that found tokens are formatted correctly in prompt."""
+        from app.agents.safety import SafetyAgent
+
+        model = MagicMock()
+        agent = SafetyAgent(model, mock_mcp)
+
+        agent._load_prompt = MagicMock(return_value="mocked prompt")
+        agent._generate_content = AsyncMock(
+            return_value='{"reasoning": "test", "tools": []}'
+        )
+
+        ctx = AgentContext(message="is it safe")
+        ctx.add_tokens(
+            [
+                {"symbol": "PEPE", "address": "0xPEPE", "name": "Pepe"},
+                {"symbol": "DOGE", "tokenAddress": "0xDOGE", "name": "Doge"},
+            ]
+        )
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(agent.run(ctx))
+
+        call_kwargs = agent._load_prompt.call_args[1]
+        tokens_str = call_kwargs["found_tokens"]
+
+        import json
+
+        tokens = json.loads(tokens_str)
+        assert len(tokens) == 2
+        assert tokens[0]["symbol"] == "PEPE"
+        assert tokens[0]["address"] == "0xPEPE"
+        assert tokens[1]["symbol"] == "DOGE"
+        assert tokens[1]["address"] == "0xDOGE"
