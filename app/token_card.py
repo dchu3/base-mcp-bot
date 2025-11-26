@@ -326,7 +326,13 @@ def format_safety_result(honeypot_data: Dict[str, Any]) -> str:
     lines = ["*Safety Check*", f"{emoji} *{escape_markdown(verdict_text)}*"]
 
     if risk:
-        lines.append(escape_markdown(f"Risk Level: {risk}"))
+        # Handle risk as dict (from honeypot MCP) or scalar
+        if isinstance(risk, dict):
+            risk_level = risk.get("riskLevel")
+            if risk_level is not None:
+                lines.append(escape_markdown(f"Risk Level: {risk_level}"))
+        else:
+            lines.append(escape_markdown(f"Risk Level: {risk}"))
 
     # Add any specific warnings
     flags = honeypot_data.get("flags", {})
