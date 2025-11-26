@@ -6,6 +6,7 @@ from app.token_card import (
     format_token_list,
     format_activity_summary,
     format_safety_result,
+    format_safety_badge,
     _format_number,
 )
 
@@ -201,6 +202,39 @@ class TestSafetyResult:
         result = format_safety_result({"summary": {"verdict": "DO_NOT_TRADE"}})
         assert "🚨" in result
         assert "DO NOT TRADE" in result
+
+
+class TestSafetyBadge:
+    """Tests for compact safety badge formatting."""
+
+    def test_badge_safe(self) -> None:
+        """Test safe badge."""
+        result = format_safety_badge({"summary": {"verdict": "SAFE"}})
+        assert result == "✅ Safe"
+
+    def test_badge_caution_with_tax(self) -> None:
+        """Test caution badge with high tax."""
+        result = format_safety_badge(
+            {"summary": {"verdict": "CAUTION"}, "simulationResult": {"buyTax": "10"}}
+        )
+        assert "⚠️ Caution" in result
+        assert "10%" in result
+
+    def test_badge_danger(self) -> None:
+        """Test danger badge."""
+        result = format_safety_badge({"summary": {"verdict": "HONEYPOT"}})
+        assert "🚨" in result
+        assert "Do not trade" in result
+
+    def test_badge_none(self) -> None:
+        """Test None input returns None."""
+        result = format_safety_badge(None)
+        assert result is None
+
+    def test_badge_unknown(self) -> None:
+        """Test unknown verdict."""
+        result = format_safety_badge({"summary": {"verdict": "WEIRD"}})
+        assert "❓" in result
 
 
 class TestNumberFormatting:

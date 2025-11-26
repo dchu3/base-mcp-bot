@@ -109,7 +109,23 @@ class SimplePlanner:
 
         # Format the best pair
         best_pair = pairs[0]
-        card = format_token_card(best_pair)
+
+        # Run honeypot check
+        honeypot_data = None
+        try:
+            logger.info("honeypot_check", address=address)
+            honeypot_data = await self.mcp_manager.honeypot.call_tool(
+                "check_token", {"address": address, "chainId": 8453}
+            )
+            logger.info(
+                "honeypot_result",
+                address=address,
+                verdict=honeypot_data.get("summary", {}).get("verdict"),
+            )
+        except Exception as hp_exc:
+            logger.warning("honeypot_check_failed", address=address, error=str(hp_exc))
+
+        card = format_token_card(best_pair, honeypot_data)
 
         # Optionally add AI insight
         if self.enable_ai_insights and len(pairs) > 0:
@@ -240,8 +256,10 @@ class SimplePlanner:
             addresses=token_addresses[:5],
         )
 
-        # Look up tokens on Dexscreener
+        # Look up tokens on Dexscreener and run honeypot checks in parallel
         token_data = []
+        honeypot_results: Dict[str, Dict[str, Any]] = {}
+
         for addr in token_addresses[:5]:  # Limit to 5 tokens
             try:
                 logger.info("dexscreener_lookup", address=addr)
@@ -259,6 +277,23 @@ class SimplePlanner:
                 if pairs:
                     # Add the best pair for this token
                     token_data.append(pairs[0])
+
+                    # Run honeypot check for this token
+                    try:
+                        logger.info("honeypot_check", address=addr)
+                        hp_result = await self.mcp_manager.honeypot.call_tool(
+                            "check_token", {"address": addr, "chainId": 8453}
+                        )
+                        honeypot_results[addr.lower()] = hp_result
+                        logger.info(
+                            "honeypot_result",
+                            address=addr,
+                            verdict=hp_result.get("summary", {}).get("verdict"),
+                        )
+                    except Exception as hp_exc:
+                        logger.warning(
+                            "honeypot_check_failed", address=addr, error=str(hp_exc)
+                        )
             except Exception as exc:
                 logger.warning("token_lookup_failed", address=addr, error=str(exc))
 
@@ -266,7 +301,9 @@ class SimplePlanner:
 
         # Format with token cards
         if token_data:
-            card = format_swap_activity(token_data, transactions, router_name.title())
+            card = format_swap_activity(
+                token_data, transactions, router_name.title(), honeypot_results
+            )
         else:
             # Fallback to simple summary if no token data
             card = format_activity_summary(transactions, router_name.title())
