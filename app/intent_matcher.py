@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from app.utils.routers import match_router_name
+
 
 class Intent(Enum):
     """Recognized user intents."""
@@ -25,6 +27,7 @@ class MatchedIntent:
     token_address: Optional[str] = None
     token_symbol: Optional[str] = None
     router_name: Optional[str] = None
+    router_key: Optional[str] = None  # Internal router key (e.g., "uniswap_v2")
     confidence: float = 1.0
 
 
@@ -33,7 +36,6 @@ ADDRESS_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
 TRENDING_KEYWORDS = {"trending", "hot", "popular", "top", "boosted", "movers"}
 ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
-ROUTER_NAMES = {"uniswap", "aerodrome", "baseswap", "sushiswap"}
 
 
 def match_intent(message: str) -> MatchedIntent:
@@ -70,15 +72,16 @@ def match_intent(message: str) -> MatchedIntent:
 
     # Check for router/DEX activity
     if any(kw in lower_msg for kw in ACTIVITY_KEYWORDS):
-        # Try to identify which router
-        router = None
-        for name in ROUTER_NAMES:
-            if name in lower_msg:
-                router = name
-                break
+        # Try to identify which router using the router module
+        router_key = match_router_name(lower_msg)
+        router_name = None
+        if router_key:
+            # Extract friendly name from key (e.g., "uniswap_v2" -> "uniswap")
+            router_name = router_key.split("_")[0]
         return MatchedIntent(
             intent=Intent.ROUTER_ACTIVITY,
-            router_name=router,
+            router_name=router_name,
+            router_key=router_key,
             confidence=0.85,
         )
 

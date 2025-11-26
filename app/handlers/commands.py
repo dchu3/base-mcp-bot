@@ -22,6 +22,10 @@ from app.store.repository import Repository
 from app.utils.formatting import escape_markdown, truncate_message, unescape_markdown
 from app.utils.logging import get_logger
 from app.utils.rate_limit import RateLimiter
+from app.utils.routers import (
+    ROUTER_ALIAS_GROUPS,
+    list_routers,
+)
 
 
 class Planner(Protocol):
@@ -66,6 +70,7 @@ def setup(application: Application, handler_context: HandlerContext) -> None:
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("clear", clear_command))
+    application.add_handler(CommandHandler("routers", routers_command))
 
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, natural_language_handler)
@@ -116,12 +121,14 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         "💬 Just ask me questions naturally:\n"
         '• "What\'s PEPE doing?"\n'
         '• "Show me recent Uniswap activity"\n'
+        '• "Show me Aerodrome V2 swaps"\n'
         '• "Check honeypot for ZORA"\n'
         '• "What are the top tokens on Base?"\n\n'
         "🧠 I remember our conversation, so you can ask follow-ups like:\n"
         '• "Tell me more about that token"\n'
         '• "What about the second one?"\n\n'
         "📋 Commands:\n"
+        "/routers — view available DEX routers\n"
         "/history — view recent conversation\n"
         "/clear — start fresh conversation\n\n"
         "⚠️ All tokens can rug pull. DYOR, not financial advice."
@@ -215,6 +222,42 @@ async def clear_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(
             "No conversation history to clear.", parse_mode=None
         )
+
+
+async def routers_command(update: Update, context: CallbackContext) -> None:
+    """Show available DEX routers."""
+    if not await ensure_user(update, context):
+        return
+
+    # Group routers by DEX name
+    routers_by_dex: Dict[str, List[tuple]] = {}
+    for key, display_name, address in list_routers("base-mainnet"):
+        # Extract DEX name (e.g., "Uniswap" from "Uniswap V2")
+        dex_name = display_name.split()[0]
+        if dex_name not in routers_by_dex:
+            routers_by_dex[dex_name] = []
+        routers_by_dex[dex_name].append((key, display_name))
+
+    lines = ["*📊 Available DEX Routers*", ""]
+
+    for dex_name, routers in routers_by_dex.items():
+        lines.append(f"*{escape_markdown(dex_name)}*")
+        for key, display_name in routers:
+            # Get version from display name (e.g., "V2" from "Uniswap V2")
+            version = display_name.split()[-1] if len(display_name.split()) > 1 else ""
+            aliases = ROUTER_ALIAS_GROUPS.get(key, [])
+            alias_str = ", ".join(aliases) if aliases else key
+            lines.append(
+                f"• {escape_markdown(version)} — _{escape_markdown(alias_str)}_"
+            )
+        lines.append("")
+
+    lines.append('💡 *Example:* _"show me aerodrome swaps"_')
+
+    response = "\n".join(lines)
+    await update.message.reply_text(
+        response, parse_mode="MarkdownV2", disable_web_page_preview=True
+    )
 
 
 async def natural_language_handler(update: Update, context: CallbackContext) -> None:

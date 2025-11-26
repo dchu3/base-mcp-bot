@@ -38,6 +38,7 @@ async def main() -> None:
     # Simplified command menu - conversational bot
     commands = [
         BotCommand("help", "Show what I can do"),
+        BotCommand("routers", "View available DEX routers"),
         BotCommand("history", "View recent conversation"),
         BotCommand("clear", "Clear conversation history"),
     ]
