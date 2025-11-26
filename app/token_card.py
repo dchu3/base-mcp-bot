@@ -326,15 +326,37 @@ def format_safety_result(honeypot_data: Dict[str, Any]) -> str:
     lines = ["*Safety Check*", f"{emoji} *{escape_markdown(verdict_text)}*"]
 
     if risk:
-        lines.append(escape_markdown(f"Risk Level: {risk}"))
+        # Handle risk as dict (from honeypot MCP) or scalar
+        if isinstance(risk, dict):
+            risk_level = risk.get("riskLevel")
+            if risk_level is not None:
+                lines.append(escape_markdown(f"Risk Level: {risk_level}"))
+        else:
+            lines.append(escape_markdown(f"Risk Level: {risk}"))
 
     # Add any specific warnings
-    flags = honeypot_data.get("flags", [])
+    flags = honeypot_data.get("flags", {})
     if flags:
-        lines.append("")
-        lines.append("*Warnings:*")
-        for flag in flags[:5]:
-            lines.append(escape_markdown(f"• {flag}"))
+        warnings = []
+        if isinstance(flags, dict):
+            # Handle dict format from honeypot MCP
+            if flags.get("isHoneypot"):
+                warnings.append("Honeypot detected")
+            if flags.get("openSource") is False:
+                warnings.append("Contract source not verified")
+            if flags.get("isProxy"):
+                warnings.append("Proxy contract")
+            if flags.get("simulationSuccess") is False:
+                warnings.append("Simulation failed")
+        elif isinstance(flags, list):
+            # Handle legacy list format
+            warnings = flags[:5]
+
+        if warnings:
+            lines.append("")
+            lines.append("*Warnings:*")
+            for warning in warnings[:5]:
+                lines.append(escape_markdown(f"• {warning}"))
 
     return "\n".join(lines)
 

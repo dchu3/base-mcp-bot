@@ -75,19 +75,19 @@ source .venv/bin/activate
 
 ### Configuration
 
-Create a `.env` file with:
+Create a `.env` file based on `.env.example`:
 
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token
 GEMINI_API_KEY=your_gemini_key
 
 # MCP server commands
-MCP_BASE_CMD="node /path/to/base-mcp-server/dist/index.js start"
+MCP_BASE_SERVER_CMD="node /path/to/base-mcp-server/dist/index.js start"
 MCP_DEXSCREENER_CMD="node /path/to/mcp-dexscreener/index.js"
-MCP_HONEYPOT_CMD="node /path/to/base-mcp-honeypot/dist/server.js stdio"
+MCP_HONEYPOT_CMD="bash -lc 'cd /path/to/base-mcp-honeypot && node dist/server.js stdio'"
 
 # Optional
-GEMINI_MODEL=gemini-2.0-flash-exp
+GEMINI_MODEL=gemini-1.5-flash-latest
 TELEGRAM_CHAT_ID=123456789  # Lock bot to single chat
 PLANNER_PROMPT_FILE=./prompts/planner.md
 ```
