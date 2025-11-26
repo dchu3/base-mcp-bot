@@ -190,14 +190,18 @@ def _filter_addresses(addresses: Set[str]) -> Set[str]:
         if addr_lower in exclude:
             continue
 
-        # Skip addresses that look like small numbers (parameters, not addresses)
-        # Real token addresses have significant entropy
-        if addr_lower.startswith("0x00000000000000000000000000000000"):
+        # Count leading zeros after 0x prefix
+        hex_part = addr_lower[2:]  # Remove 0x
+        leading_zeros = len(hex_part) - len(hex_part.lstrip("0"))
+
+        # Real token addresses typically don't have more than 10 leading zeros
+        # Addresses with many leading zeros are usually small numbers (parameters)
+        if leading_zeros > 16:
             continue
 
-        # Skip addresses that are too short after removing leading zeros
-        stripped = addr_lower.lstrip("0x").lstrip("0")
-        if len(stripped) < 10:
+        # Skip addresses that are mostly zeros (low entropy)
+        non_zero_chars = hex_part.replace("0", "")
+        if len(non_zero_chars) < 8:
             continue
 
         filtered.add(addr_lower)

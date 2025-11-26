@@ -244,9 +244,16 @@ class SimplePlanner:
         token_data = []
         for addr in token_addresses[:5]:  # Limit to 5 tokens
             try:
+                logger.info("dexscreener_lookup", address=addr)
                 dex_result = await self.mcp_manager.dexscreener.call_tool(
                     "getPairsByToken",
                     {"chainId": self.chain_id, "tokenAddress": addr},
+                )
+                logger.info(
+                    "dexscreener_result",
+                    address=addr,
+                    result_type=type(dex_result).__name__,
+                    has_pairs=bool(self._extract_pairs(dex_result)),
                 )
                 pairs = self._extract_pairs(dex_result)
                 if pairs:
@@ -254,6 +261,8 @@ class SimplePlanner:
                     token_data.append(pairs[0])
             except Exception as exc:
                 logger.warning("token_lookup_failed", address=addr, error=str(exc))
+
+        logger.info("token_data_count", count=len(token_data))
 
         # Format with token cards
         if token_data:
