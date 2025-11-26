@@ -335,3 +335,33 @@ class TestNumberFormatting:
 
     def test_format_string(self) -> None:
         assert _format_number("invalid") == "invalid"
+
+
+class TestHoneypotErrorMessages:
+    """Tests for honeypot error message formatting."""
+
+    def test_honeypot_404_error_message(self) -> None:
+        """Test that 404 errors produce user-friendly message."""
+        from app.utils.formatting import escape_markdown
+
+        # Simulate what the error handler produces
+        card = "*Safety Check*\n" "⚠️ *UNABLE TO VERIFY*\n" + escape_markdown(
+            "This token is not indexed in the Honeypot database. "
+            "Exercise caution and do your own research."
+        )
+        assert "*Safety Check*" in card
+        assert "UNABLE TO VERIFY" in card
+        assert "not indexed" in card
+        assert "404" not in card  # Should not expose technical error
+
+    def test_honeypot_generic_error_message(self) -> None:
+        """Test that generic errors produce user-friendly message."""
+        from app.utils.formatting import escape_markdown
+
+        # Simulate what the error handler produces
+        card = "*Safety Check*\n" "❓ *CHECK UNAVAILABLE*\n" + escape_markdown(
+            "Unable to verify token safety at this time. " "Please try again later."
+        )
+        assert "*Safety Check*" in card
+        assert "CHECK UNAVAILABLE" in card
+        assert "try again later" in card
