@@ -1,5 +1,7 @@
 """Tests for the simplified planner components."""
 
+import pytest
+
 from app.intent_matcher import Intent, match_intent
 from app.token_card import (
     format_token_card,
@@ -370,7 +372,8 @@ class TestHoneypotErrorMessages:
 class TestAgenticPlannerDelegation:
     """Tests for agentic planner delegation in SimplePlanner."""
 
-    def test_agentic_planner_lazy_loaded(self) -> None:
+    @pytest.mark.asyncio
+    async def test_agentic_planner_lazy_loaded(self) -> None:
         """Test that agentic planner is only created when needed."""
         from unittest.mock import MagicMock
         from app.simple_planner import SimplePlanner
@@ -392,15 +395,16 @@ class TestAgenticPlannerDelegation:
         assert planner._agentic_planner is None
 
         # After calling _get_agentic_planner, it should be created
-        agentic = planner._get_agentic_planner()
+        agentic = await planner._get_agentic_planner()
         assert agentic is not None
         assert planner._agentic_planner is agentic
 
         # Calling again should return the same instance (not create new)
-        agentic2 = planner._get_agentic_planner()
+        agentic2 = await planner._get_agentic_planner()
         assert agentic2 is agentic
 
-    def test_agentic_planner_inherits_config(self) -> None:
+    @pytest.mark.asyncio
+    async def test_agentic_planner_inherits_config(self) -> None:
         """Test that agentic planner gets correct configuration."""
         from unittest.mock import MagicMock
         from app.simple_planner import SimplePlanner
@@ -419,15 +423,12 @@ class TestAgenticPlannerDelegation:
             router_map=router_map,
         )
 
-        agentic = planner._get_agentic_planner()
+        agentic = await planner._get_agentic_planner()
 
         # Verify config was passed through
         assert agentic.mcp_manager is mock_mcp
         assert agentic.router_map == router_map
         assert list(agentic.router_keys) == ["aerodrome"]
-
-
-import pytest
 
 
 class TestAgenticPlannerDelegationAsync:
@@ -436,7 +437,7 @@ class TestAgenticPlannerDelegationAsync:
     @pytest.mark.asyncio
     async def test_handle_unknown_delegates_to_agentic(self) -> None:
         """Test that unknown intents delegate to agentic planner."""
-        from unittest.mock import MagicMock, AsyncMock, patch
+        from unittest.mock import MagicMock, AsyncMock
         from app.simple_planner import SimplePlanner
         from app.planner_types import PlannerResult
 

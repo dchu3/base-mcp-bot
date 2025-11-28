@@ -1,5 +1,6 @@
 """Simplified planner with pattern-based routing and template formatting."""
 
+import asyncio
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import google.generativeai as genai
 
@@ -48,18 +49,22 @@ class SimplePlanner:
         self._api_key = api_key
         self._model_name = model_name
         self._agentic_planner: Optional["GeminiPlanner"] = None
+        self._planner_lock = asyncio.Lock()
 
-    def _get_agentic_planner(self) -> "GeminiPlanner":
-        """Lazy-load the agentic planner for unknown intents."""
+    async def _get_agentic_planner(self) -> "GeminiPlanner":
+        """Lazy-load the agentic planner for unknown intents (thread-safe)."""
         if self._agentic_planner is None:
-            from app.planner import GeminiPlanner
-            self._agentic_planner = GeminiPlanner(
-                api_key=self._api_key,
-                mcp_manager=self.mcp_manager,
-                router_keys=list(self.router_map.keys()),
-                router_map=self.router_map,
-                model_name=self._model_name,
-            )
+            async with self._planner_lock:
+                # Double-check after acquiring lock
+                if self._agentic_planner is None:
+                    from app.planner import GeminiPlanner
+                    self._agentic_planner = GeminiPlanner(
+                        api_key=self._api_key,
+                        mcp_manager=self.mcp_manager,
+                        router_keys=list(self.router_map.keys()),
+                        router_map=self.router_map,
+                        model_name=self._model_name,
+                    )
         return self._agentic_planner
 
     async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
@@ -510,7 +515,7 @@ class SimplePlanner:
 
         try:
             # Delegate to the full agentic planner which can call tools
-            planner = self._get_agentic_planner()
+            planner = await self._get_agentic_planner()
             return await planner.run(message, context)
         except Exception as exc:
             logger.error("agentic_fallback_error", error=str(exc))
