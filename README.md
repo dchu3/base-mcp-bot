@@ -63,12 +63,13 @@ Search the web for token project information, news, and background:
 - `find info about <query>`
 - `find info on <query>`
 - `find information about <query>`
-- `find information on <query>`
+- `look up <query>` (for general project, news, or market info; not for token-specific lookups)
 
 **Example queries:**
 - "search web for Bitcoin news"
 - "web search DEGEN token"
 - "look up Base ecosystem"
+  *(Use "look up" for general project or market info. For token details, use token-specific queries.)*
 
 ### 💬 Conversational Memory
 The CLI remembers context from your conversation in interactive mode:
