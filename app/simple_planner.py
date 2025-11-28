@@ -426,16 +426,7 @@ class SimplePlanner:
             )
 
             # Format the search results
-            if isinstance(result, str):
-                # DuckDuckGo MCP returns formatted string
-                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(result)}"
-            elif isinstance(result, dict):
-                # Handle structured response
-                content = result.get("content") or result.get("results") or str(result)
-                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(str(content))}"
-            else:
-                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(str(result))}"
-
+            formatted = self._format_web_search_results(result, query)
             return PlannerResult(message=formatted, tokens=[])
 
         except Exception as exc:
@@ -444,6 +435,53 @@ class SimplePlanner:
                 message=escape_markdown(f"Web search failed: {exc}"),
                 tokens=[],
             )
+
+    def _format_web_search_results(self, result: Any, query: str) -> str:
+        """Format web search results for display."""
+        header = f"*🔍 Web Search: {escape_markdown(query)}*\n"
+
+        # Extract the result text
+        if isinstance(result, dict):
+            text = result.get("result") or result.get("content") or str(result)
+        elif isinstance(result, str):
+            text = result
+        else:
+            text = str(result)
+
+        # Parse and format individual results
+        lines = []
+        # Split by numbered results (1. , 2. , etc.)
+        import re
+        entries = re.split(r'\n\n(?=\d+\.)', text)
+
+        for entry in entries:
+            entry = entry.strip()
+            if not entry:
+                continue
+
+            # Extract title, URL, summary
+            title_match = re.search(r'^\d+\.\s*(.+?)(?:\n|$)', entry)
+            url_match = re.search(r'URL:\s*(https?://\S+)', entry)
+            summary_match = re.search(r'Summary:\s*(.+)', entry, re.DOTALL)
+
+            if title_match:
+                title = title_match.group(1).strip()
+                url = url_match.group(1).strip() if url_match else None
+                summary = summary_match.group(1).strip()[:200] if summary_match else None
+
+                # Format as clean entry
+                if url:
+                    lines.append(f"📰 *{escape_markdown(title)}*")
+                    lines.append(f"   🔗 {url}")
+                    if summary:
+                        lines.append(f"   {escape_markdown(summary)}")
+                    lines.append("")
+
+        if lines:
+            return header + "\n" + "\n".join(lines)
+        else:
+            # Fallback: just escape and return raw text
+            return header + "\n" + escape_markdown(text[:1500])
 
     async def _handle_unknown(
         self, message: str, context: Dict[str, Any]
