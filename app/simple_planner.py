@@ -80,6 +80,9 @@ class SimplePlanner:
             elif matched.intent == Intent.SAFETY_CHECK:
                 return await self._handle_safety_check(matched, context)
 
+            elif matched.intent == Intent.WEB_SEARCH:
+                return await self._handle_web_search(matched, context)
+
             else:
                 # Fallback to AI for complex queries
                 return await self._handle_unknown(message, context)
@@ -392,6 +395,55 @@ class SimplePlanner:
             card = token_card + "\n\n" + card
 
         return PlannerResult(message=card, tokens=pairs[:1])
+
+    async def _handle_web_search(
+        self, matched: MatchedIntent, context: Dict[str, Any]
+    ) -> PlannerResult:
+        """Handle web search request."""
+        query = matched.search_query
+        if not query:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Please provide a search query. Example: 'search web for Bitcoin news'"
+                ),
+                tokens=[],
+            )
+
+        logger.info("web_search", query=query)
+
+        # Check if websearch is available
+        if not self.mcp_manager.websearch:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Web search is not configured. Set MCP_WEBSEARCH_CMD in your .env file."
+                ),
+                tokens=[],
+            )
+
+        try:
+            result = await self.mcp_manager.websearch.call_tool(
+                "search", {"query": query, "max_results": 5}
+            )
+
+            # Format the search results
+            if isinstance(result, str):
+                # DuckDuckGo MCP returns formatted string
+                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(result)}"
+            elif isinstance(result, dict):
+                # Handle structured response
+                content = result.get("content") or result.get("results") or str(result)
+                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(str(content))}"
+            else:
+                formatted = f"*🔍 Web Search Results*\n\n{escape_markdown(str(result))}"
+
+            return PlannerResult(message=formatted, tokens=[])
+
+        except Exception as exc:
+            logger.error("web_search_error", query=query, error=str(exc))
+            return PlannerResult(
+                message=escape_markdown(f"Web search failed: {exc}"),
+                tokens=[],
+            )
 
     async def _handle_unknown(
         self, message: str, context: Dict[str, Any]
