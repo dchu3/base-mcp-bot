@@ -1,5 +1,7 @@
 """Tests for the simplified planner components."""
 
+import pytest
+
 from app.intent_matcher import Intent, match_intent
 from app.token_card import (
     format_token_card,
@@ -365,3 +367,134 @@ class TestHoneypotErrorMessages:
         assert "*Safety Check*" in card
         assert "CHECK UNAVAILABLE" in card
         assert "try again later" in card
+
+
+class TestAgenticPlannerDelegation:
+    """Tests for agentic planner delegation in SimplePlanner."""
+
+    @pytest.mark.asyncio
+    async def test_agentic_planner_lazy_loaded(self) -> None:
+        """Test that agentic planner is only created when needed."""
+        from unittest.mock import MagicMock
+        from app.simple_planner import SimplePlanner
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={"uniswap_v2": {"base-mainnet": "0x123"}},
+        )
+
+        # Initially, agentic planner should not exist
+        assert planner._agentic_planner is None
+
+        # After calling _get_agentic_planner, it should be created
+        agentic = await planner._get_agentic_planner()
+        assert agentic is not None
+        assert planner._agentic_planner is agentic
+
+        # Calling again should return the same instance (not create new)
+        agentic2 = await planner._get_agentic_planner()
+        assert agentic2 is agentic
+
+    @pytest.mark.asyncio
+    async def test_agentic_planner_inherits_config(self) -> None:
+        """Test that agentic planner gets correct configuration."""
+        from unittest.mock import MagicMock
+        from app.simple_planner import SimplePlanner
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+
+        router_map = {"aerodrome": {"base-mainnet": "0xabc"}}
+        planner = SimplePlanner(
+            api_key="my-api-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-pro",
+            router_map=router_map,
+        )
+
+        agentic = await planner._get_agentic_planner()
+
+        # Verify config was passed through
+        assert agentic.mcp_manager is mock_mcp
+        assert agentic.router_map == router_map
+        assert list(agentic.router_keys) == ["aerodrome"]
+
+
+class TestAgenticPlannerDelegationAsync:
+    """Async tests for agentic planner delegation."""
+
+    @pytest.mark.asyncio
+    async def test_handle_unknown_delegates_to_agentic(self) -> None:
+        """Test that unknown intents delegate to agentic planner."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+        from app.planner_types import PlannerResult
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        # Mock the agentic planner
+        mock_agentic = MagicMock()
+        mock_agentic.run = AsyncMock(
+            return_value=PlannerResult(message="Agentic response", tokens=[])
+        )
+        planner._agentic_planner = mock_agentic
+
+        result = await planner._handle_unknown("what is the crypto market doing?", {})
+
+        assert result.message == "Agentic response"
+        mock_agentic.run.assert_awaited_once_with(
+            "what is the crypto market doing?", {}
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_unknown_error_fallback(self) -> None:
+        """Test that errors in agentic planner fall back to default message."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        # Mock the agentic planner to raise an error
+        mock_agentic = MagicMock()
+        mock_agentic.run = AsyncMock(side_effect=Exception("API error"))
+        planner._agentic_planner = mock_agentic
+
+        result = await planner._handle_unknown("some complex query", {})
+
+        # Should return the fallback message
+        assert "not sure how to help" in result.message
+        assert "token" in result.message.lower()
+        assert result.tokens == []

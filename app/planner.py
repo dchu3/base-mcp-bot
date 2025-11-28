@@ -95,9 +95,9 @@ class GeminiPlanner:
             You are a router for a crypto trading bot.
             Analyze the user message: "$message"
             
-            Determine if this requires using external tools (Dexscreener, Honeypot, Base) or if it is general conversation.
+            Determine if this requires using external tools (Dexscreener, Honeypot, Base, Websearch) or if it is general conversation.
             
-            - TOOL_USE: "Price of PEPE", "Is this safe?", "Check 0x123...", "What's trending?", "Scan this token", "Analyze the last one".
+            - TOOL_USE: "Price of PEPE", "Is this safe?", "Check 0x123...", "What's trending?", "Scan this token", "Analyze the last one", "crypto market today", "market summary", "crypto news", "what's happening in crypto".
             - CHITCHAT: "Hello", "How are you?", "What can you do?", "Thanks", "Help", "Good morning".
             
             Respond with JSON: {"intent": "TOOL_USE" | "CHITCHAT"}
@@ -139,7 +139,8 @@ class GeminiPlanner:
             4. Cached tokens (recent router context + user watchlist hints): $recent_tokens. Use these when matching user intent to token lookups. Most recent router summary: $recent_router.
             5. Cross-reference discovered token addresses with Dexscreener tools to evaluate price action, liquidity, and unusual volume so you can highlight opportunities or noteworthy movements.
             6. For each highlighted token, call honeypot.check_token to classify it as SAFE_TO_TRADE, CAUTION, or DO_NOT_TRADE and mention that verdict in your summary.
-            7. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
+            7. If the user is asking about crypto market news, trends, or general information not available on-chain, use websearch.search to find relevant information.
+            8. If needed, call other supporting tools (e.g. transaction lookups) to clarify context.
 
             Available tools (client.method):
             $tool_definitions
@@ -149,7 +150,7 @@ class GeminiPlanner:
                 "reasoning": "thought process...",
                 "confidence": 1.0,
                 "clarification": null,
-                "tools": [{"client": "base|dexscreener|honeypot", "method": "<method>", "params": {...}}]
+                "tools": [{"client": "base|dexscreener|honeypot|websearch", "method": "<method>", "params": {...}}]
             }
             """
         ).strip()
@@ -1603,7 +1604,14 @@ class GeminiPlanner:
             call: ToolInvocation = entry["call"]
             title = f"{call.client}.{call.method}"
             if "error" in entry:
-                sections.append(f"*{title}*: failed — {entry['error']}")
+                # Log the detailed error but show generic message to user
+                logger.warning(
+                    "tool_call_failed",
+                    client=call.client,
+                    method=call.method,
+                    error=entry["error"],
+                )
+                sections.append(f"*{escape_markdown(title)}*: temporarily unavailable")
                 continue
 
             result = entry.get("result")

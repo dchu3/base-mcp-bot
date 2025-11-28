@@ -1,6 +1,7 @@
 """Simplified planner with pattern-based routing and template formatting."""
 
-from typing import Any, Dict, List, Optional
+import asyncio
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import google.generativeai as genai
 
 from app.intent_matcher import Intent, MatchedIntent, match_intent
@@ -22,11 +23,14 @@ from app.utils.routers import (
 )
 from app.utils.tx_parser import extract_tokens_from_transactions
 
+if TYPE_CHECKING:
+    from app.planner import GeminiPlanner
+
 logger = get_logger(__name__)
 
 
 class SimplePlanner:
-    """Hybrid planner: pattern matching + direct MCP calls + optional AI enhancement."""
+    """Hybrid planner: pattern matching + direct MCP calls + agentic fallback."""
 
     def __init__(
         self,
@@ -42,6 +46,26 @@ class SimplePlanner:
         self.router_map = router_map
         self.enable_ai_insights = enable_ai_insights
         self.chain_id = "base"
+        self._api_key = api_key
+        self._model_name = model_name
+        self._agentic_planner: Optional["GeminiPlanner"] = None
+        self._planner_lock = asyncio.Lock()
+
+    async def _get_agentic_planner(self) -> "GeminiPlanner":
+        """Lazy-load the agentic planner for unknown intents (thread-safe)."""
+        if self._agentic_planner is None:
+            async with self._planner_lock:
+                # Double-check after acquiring lock
+                if self._agentic_planner is None:
+                    from app.planner import GeminiPlanner
+                    self._agentic_planner = GeminiPlanner(
+                        api_key=self._api_key,
+                        mcp_manager=self.mcp_manager,
+                        router_keys=list(self.router_map.keys()),
+                        router_map=self.router_map,
+                        model_name=self._model_name,
+                    )
+        return self._agentic_planner
 
     async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
         """Process user message and return formatted response.
@@ -486,33 +510,20 @@ class SimplePlanner:
     async def _handle_unknown(
         self, message: str, context: Dict[str, Any]
     ) -> PlannerResult:
-        """Handle unknown intent with AI."""
-        logger.info("unknown_intent_fallback", message=message)
-
-        # Use AI to understand and respond
-        prompt = f"""You are a helpful crypto assistant for Base chain tokens.
-
-User message: "{message}"
-
-If the user is asking about a specific token, tell them to provide the token address or symbol.
-If they're asking about DEX activity, mention they can ask about Uniswap, Aerodrome, etc.
-If they're asking about safety, tell them to provide a token address.
-
-Keep your response brief (2-3 sentences). Be helpful and friendly."""
+        """Handle unknown intent with agentic planner."""
+        logger.info("unknown_intent_agentic_fallback", message=message)
 
         try:
-            response = await self.model.generate_content_async(prompt)
-            return PlannerResult(
-                message=escape_markdown(response.text.strip()),
-                tokens=[],
-            )
+            # Delegate to the full agentic planner which can call tools
+            planner = await self._get_agentic_planner()
+            return await planner.run(message, context)
         except Exception as exc:
-            logger.error("ai_fallback_error", error=str(exc))
+            logger.error("agentic_fallback_error", error=str(exc))
             return PlannerResult(
                 message=escape_markdown(
                     "I'm not sure how to help with that. "
                     "Try asking about a specific token (by address or symbol), "
-                    "trending tokens, or DEX activity."
+                    "trending tokens, or 'search web for <topic>'."
                 ),
                 tokens=[],
             )
