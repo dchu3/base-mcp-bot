@@ -68,6 +68,8 @@ Search the web for token project information, news, and background:
 **Example queries:**
 - "search web for Bitcoin news"
 - "web search DEGEN token"
+- "google bitcoin"
+- "web search bitcoin"
 - "look up Base ecosystem"
   *(Use "look up" for general project or market info. For token details, use token-specific queries.)*
 
