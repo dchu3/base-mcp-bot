@@ -60,6 +60,10 @@ Search the web for token project information, news, and background:
 - `web search <query>`
 - `google <query>`
 - `look up <query>`
+- `find info about <query>`
+- `find info on <query>`
+- `find information about <query>`
+- `find information on <query>`
 
 **Example queries:**
 - "search web for Bitcoin news"
