@@ -16,6 +16,7 @@ class Intent(Enum):
     TRENDING = "trending"  # User wants trending/hot tokens
     ROUTER_ACTIVITY = "router_activity"  # User wants DEX activity
     SAFETY_CHECK = "safety_check"  # User asking if token is safe
+    WEB_SEARCH = "web_search"  # User wants to search the web
     UNKNOWN = "unknown"  # Fallback to LLM
 
 
@@ -28,6 +29,7 @@ class MatchedIntent:
     token_symbol: Optional[str] = None
     router_name: Optional[str] = None
     router_key: Optional[str] = None  # Internal router key (e.g., "uniswap_v2")
+    search_query: Optional[str] = None  # Query for web search
     confidence: float = 1.0
 
 
@@ -36,6 +38,13 @@ ADDRESS_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
 TRENDING_KEYWORDS = {"trending", "hot", "popular", "top", "boosted", "movers"}
 ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume", "transfers"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
+WEB_SEARCH_PATTERNS = [
+    r"search\s+(?:the\s+)?web\s+(?:for\s+)?(.+)",
+    r"web\s+search\s+(?:for\s+)?(.+)",
+    r"google\s+(.+)",
+    r"look\s+up\s+(.+)",
+    r"find\s+(?:info|information)\s+(?:on|about)\s+(.+)",
+]
 
 
 def match_intent(message: str) -> MatchedIntent:
@@ -49,7 +58,18 @@ def match_intent(message: str) -> MatchedIntent:
     """
     lower_msg = message.lower().strip()
 
-    # Check for token address first (highest priority)
+    # Check for explicit web search first
+    for pattern in WEB_SEARCH_PATTERNS:
+        match = re.search(pattern, lower_msg, re.IGNORECASE)
+        if match:
+            query = match.group(1).strip()
+            return MatchedIntent(
+                intent=Intent.WEB_SEARCH,
+                search_query=query,
+                confidence=0.95,
+            )
+
+    # Check for token address (highest priority)
     address_match = ADDRESS_PATTERN.search(message)
     if address_match:
         address = address_match.group(1)

@@ -80,6 +80,9 @@ class SimplePlanner:
             elif matched.intent == Intent.SAFETY_CHECK:
                 return await self._handle_safety_check(matched, context)
 
+            elif matched.intent == Intent.WEB_SEARCH:
+                return await self._handle_web_search(matched, context)
+
             else:
                 # Fallback to AI for complex queries
                 return await self._handle_unknown(message, context)
@@ -392,6 +395,93 @@ class SimplePlanner:
             card = token_card + "\n\n" + card
 
         return PlannerResult(message=card, tokens=pairs[:1])
+
+    async def _handle_web_search(
+        self, matched: MatchedIntent, context: Dict[str, Any]
+    ) -> PlannerResult:
+        """Handle web search request."""
+        query = matched.search_query
+        if not query:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Please provide a search query. Example: 'search web for Bitcoin news'"
+                ),
+                tokens=[],
+            )
+
+        logger.info("web_search", query=query)
+
+        # Check if websearch is available
+        if not self.mcp_manager.websearch:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Web search is not configured. Set MCP_WEBSEARCH_CMD in your .env file."
+                ),
+                tokens=[],
+            )
+
+        try:
+            result = await self.mcp_manager.websearch.call_tool(
+                "search", {"query": query, "max_results": 5}
+            )
+
+            # Format the search results
+            formatted = self._format_web_search_results(result, query)
+            return PlannerResult(message=formatted, tokens=[])
+
+        except Exception as exc:
+            logger.error("web_search_error", query=query, error=str(exc))
+            return PlannerResult(
+                message=escape_markdown(f"Web search failed: {exc}"),
+                tokens=[],
+            )
+
+    def _format_web_search_results(self, result: Any, query: str) -> str:
+        """Format web search results for display."""
+        header = f"*🔍 Web Search: {escape_markdown(query)}*\n"
+
+        # Extract the result text
+        if isinstance(result, dict):
+            text = result.get("result") or result.get("content") or str(result)
+        elif isinstance(result, str):
+            text = result
+        else:
+            text = str(result)
+
+        # Parse and format individual results
+        lines = []
+        # Split by numbered results (1. , 2. , etc.)
+        import re
+        entries = re.split(r'\n\n(?=\d+\.)', text)
+
+        for entry in entries:
+            entry = entry.strip()
+            if not entry:
+                continue
+
+            # Extract title, URL, summary
+            title_match = re.search(r'^\d+\.\s*(.+?)(?:\n|$)', entry)
+            url_match = re.search(r'URL:\s*(https?://\S+)', entry)
+            summary_match = re.search(r'Summary:\s*(.+)', entry, re.DOTALL)
+
+            if title_match:
+                title = title_match.group(1).strip()
+                url = url_match.group(1).strip() if url_match else None
+                summary = summary_match.group(1).strip()[:200] if summary_match else None
+
+                # Format as clean entry
+                if url:
+                    lines.append(f"📰 *{escape_markdown(title)}*")
+                    lines.append(f"   🔗 {url}")
+                    if summary:
+                        lines.append(f"   {escape_markdown(summary)}")
+                    lines.append("")
+
+        if lines:
+            return header + "\n" + "\n".join(lines)
+        else:
+            # Fallback: just escape and return raw text
+            return header + "\n" + escape_markdown(text[:1500])
 
     async def _handle_unknown(
         self, message: str, context: Dict[str, Any]
