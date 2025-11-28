@@ -1,6 +1,6 @@
 # base-mcp-bot
 
-Telegram bot for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, Honeypot detection, and web search.
+CLI tool for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, Honeypot detection, and web search.
 
 ## Features
 
@@ -28,7 +28,7 @@ When viewing DEX activity, tokens are displayed in rich cards showing:
 - **Tax info** (buy/sell percentages if applicable)
 - **Direct link** to Dexscreener
 
-Example card:
+Example output:
 ```
 SURGE
 💰 Price: $0.038980 (📉 -20.4%)
@@ -61,19 +61,10 @@ Search the web for token project information, news, and background:
 - "Latest news on Base ecosystem"
 
 ### 💬 Conversational Memory
-The bot remembers context from your conversation:
+The CLI remembers context from your conversation in interactive mode:
 - "What's PEPE doing?" → Shows token info
 - "Is it safe?" → Runs honeypot check on PEPE
 - "Tell me more" → Provides additional details
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show what the bot can do |
-| `/routers` | View available DEX routers and aliases |
-| `/history` | View recent conversation history |
-| `/clear` | Clear conversation and start fresh |
 
 ## Getting Started
 
@@ -89,7 +80,6 @@ source .venv/bin/activate
 Create a `.env` file based on `.env.example`:
 
 ```env
-TELEGRAM_BOT_TOKEN=your_bot_token
 GEMINI_API_KEY=your_gemini_key
 
 # MCP server commands
@@ -100,25 +90,17 @@ MCP_WEBSEARCH_CMD="uvx duckduckgo-mcp-server"
 
 # Optional
 GEMINI_MODEL=gemini-1.5-flash-latest
-TELEGRAM_CHAT_ID=123456789  # Lock bot to single chat
 PLANNER_PROMPT_FILE=./prompts/planner.md
 ```
 
-### Run the Telegram Bot
-
-```bash
-./scripts/start.sh
-```
-
-The bot launches the MCP servers and listens for natural language requests.
-
-### Run the CLI
-
-The CLI provides the same functionality without Telegram, with **no message length restrictions**:
+### Usage
 
 ```bash
 # Single query
 python -m app.cli "show me uniswap activity"
+
+# Or use the start script
+./scripts/start.sh "show me uniswap activity"
 
 # Interactive mode (REPL with conversation memory)
 python -m app.cli --interactive
@@ -133,7 +115,7 @@ python -m app.cli --verbose "check 0x..."
 echo "show me PEPE" | python -m app.cli --stdin
 ```
 
-**CLI Options:**
+### CLI Options
 
 | Option | Description |
 |--------|-------------|
@@ -143,7 +125,7 @@ echo "show me PEPE" | python -m app.cli --stdin
 | `--stdin` | Read query from stdin |
 | `--no-ai` | Disable AI insights/synthesis |
 
-**Interactive Commands:**
+### Interactive Commands
 
 | Command | Description |
 |---------|-------------|
@@ -152,36 +134,17 @@ echo "show me PEPE" | python -m app.cli --stdin
 | `/routers` | List available DEX routers |
 | `/help` | Show available commands |
 
-## Example Interactions
-
-### Telegram Bot
-
-```
-You: Show me recent Uniswap V2 swaps
-Bot: 🔄 Recent Uniswap V2 Swaps
-     [Token cards with prices, liquidity, safety badges...]
-
-You: What about Aerodrome?
-Bot: 🔄 Recent Aerodrome V2 Swaps
-     [Token cards...]
-
-You: Is the first token safe?
-Bot: ✅ Safe - No honeypot detected
-     Buy Tax: 0% | Sell Tax: 0%
-
-You: /routers
-Bot: 📊 Available DEX Routers
-     Uniswap: V2, V3, V4
-     Aerodrome: V2
-     ...
-```
-
-### CLI
+## Example Session
 
 ```bash
-$ python -m app.cli "show me uniswap activity"
+$ python -m app.cli --interactive
 ⏳ Starting MCP servers...
 ⏳ MCP servers ready
+Base MCP Bot CLI - Interactive Mode
+Type your queries, or use /quit to exit, /clear to reset context
+--------------------------------------------------
+
+> show me uniswap activity
 ⏳ Processing: show me uniswap activity
 
 🔄 Recent Uniswap V2 Swaps
@@ -192,12 +155,21 @@ $ python -m app.cli "show me uniswap activity"
    Safety: ✅ SAFE_TO_TRADE
    🔗 https://dexscreener.com/base/0x...
 
-📊 WOJAK/USDC
-   Price: $0.0012  |  24h: -8.3%
-   ...
+> is the first one safe?
+⏳ Processing: is the first one safe?
 
-$ python -m app.cli --output json "trending" | jq '.tokens[0].symbol'
-"PEPE"
+✅ SAFE_TO_TRADE
+Buy Tax: 0% | Sell Tax: 0%
+No honeypot risks detected.
+
+> tell me about the project
+⏳ Processing: tell me about the project
+
+PEPE is a meme token inspired by the popular Pepe the Frog meme...
+[Web search results with project background]
+
+> /quit
+Goodbye!
 ```
 
 ## Architecture
@@ -205,12 +177,11 @@ $ python -m app.cli --output json "trending" | jq '.tokens[0].symbol'
 - **SimplePlanner**: Pattern-based intent matching for common queries (router activity, token lookups)
 - **Gemini AI**: Handles complex/ambiguous queries that don't match patterns
 - **MCP Servers**: 
-  - Blockscout (transactions)
+  - Blockscout (Base transactions)
   - Dexscreener (token data)
   - Honeypot (safety checks)
   - DuckDuckGo (web search)
 - **Token Cards**: Consistent formatting with automatic Dexscreener enrichment
-- **Interfaces**: Telegram bot (with 4096 char limit) and CLI (unlimited output)
 
 ## Development
 
@@ -225,3 +196,7 @@ black --check .
 ### Prompt Customization
 
 Edit `prompts/planner.md` to customize how the Gemini planner handles queries. The `$tool_definitions` placeholder is automatically populated with MCP server capabilities.
+
+## License
+
+MIT

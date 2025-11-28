@@ -14,4 +14,4 @@ fi
 
 source .venv/bin/activate
 
-exec python -m app.main "$@"
+exec python -m app.cli "$@"

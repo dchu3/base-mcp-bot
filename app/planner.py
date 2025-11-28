@@ -859,7 +859,6 @@ class GeminiPlanner:
             return {}
 
         if client == "base" and method == "getDexRouterActivity":
-            original_router_value = normalized.get("router")
             router_override = (
                 normalized.pop("router_address", None)
                 or normalized.pop("routerAddress", None)

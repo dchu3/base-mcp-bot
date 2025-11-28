@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Optional
 
-from pydantic import AnyHttpUrl, Field, ValidationError, field_validator
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +19,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    telegram_bot_token: str = Field(..., alias="TELEGRAM_BOT_TOKEN")
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
     gemini_model: str = Field(
         default="gemini-1.5-flash-latest",
@@ -29,7 +28,6 @@ class Settings(BaseSettings):
         default=None,
         alias="PLANNER_PROMPT_FILE",
     )
-    telegram_chat_id: Optional[int] = Field(default=None, alias="TELEGRAM_CHAT_ID")
 
     mcp_base_server_cmd: str = Field(
         default="node ../base-mcp-server/dist/index.js start",
@@ -55,30 +53,11 @@ class Settings(BaseSettings):
         le=120,
     )
     max_items: int = Field(default=20, alias="MAX_ITEMS", ge=1, le=100)
-    rate_limit_per_user_per_min: int = Field(
-        default=10,
-        alias="RATE_LIMIT_PER_USER_PER_MIN",
-        ge=1,
-        le=60,
-    )
 
     database_url: str = Field(
         default="sqlite+aiosqlite:///./.tmp/state.db",
         alias="DATABASE_URL",
     )
-
-    scheduler_interval_minutes: int = Field(
-        default=60,
-        alias="SCHEDULER_INTERVAL_MINUTES",
-        ge=1,
-        le=60,
-    )
-    healthcheck_url: Optional[AnyHttpUrl] = Field(
-        default=None,
-        alias="HEALTHCHECK_URL",
-    )
-
-    admin_user_ids: List[int] = Field(default_factory=list, alias="ADMIN_USER_IDS")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
@@ -94,17 +73,6 @@ class Settings(BaseSettings):
     planner_max_iterations: int = Field(
         default=2, alias="PLANNER_MAX_ITERATIONS", ge=1, le=5
     )
-
-    @field_validator("admin_user_ids", mode="before")
-    @classmethod
-    def _parse_admin_ids(cls, value: Any) -> List[int]:
-        if value in (None, "", []):
-            return []
-        if isinstance(value, str):
-            return [int(part.strip()) for part in value.split(",") if part.strip()]
-        if isinstance(value, (list, tuple, set)):
-            return [int(v) for v in value]
-        return [int(value)]
 
 
 @lru_cache(maxsize=1)
