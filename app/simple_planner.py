@@ -490,15 +490,20 @@ class SimplePlanner:
         logger.info("unknown_intent_fallback", message=message)
 
         # Use AI to understand and respond
-        prompt = f"""You are a helpful crypto assistant for Base chain tokens.
+        prompt = f"""You are a knowledgeable crypto assistant specializing in Base chain but with broad crypto knowledge.
 
 User message: "{message}"
 
-If the user is asking about a specific token, tell them to provide the token address or symbol.
-If they're asking about DEX activity, mention they can ask about Uniswap, Aerodrome, etc.
-If they're asking about safety, tell them to provide a token address.
+Instructions:
+- Answer general crypto questions using your knowledge (market concepts, how things work, token types, etc.)
+- For questions about current prices, news, or real-time data, suggest the user try "search web for <topic>"
+- For specific token queries, you can look up tokens by address (0x...) or symbol (like PEPE)
+- For DEX activity, you can check Uniswap, Aerodrome, PancakeSwap, SushiSwap on Base
+- For safety checks, you can analyze any token address
 
-Keep your response brief (2-3 sentences). Be helpful and friendly."""
+Be conversational and helpful. If you can answer from general knowledge, do so.
+If the question needs current/live data, suggest the appropriate command.
+Keep responses concise (2-4 sentences)."""
 
         try:
             response = await self.model.generate_content_async(prompt)
