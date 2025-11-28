@@ -55,10 +55,16 @@ Search the web for token project information, news, and background:
 - Recent news and announcements
 - General crypto market trends
 
+**Trigger keywords:**
+- `search web for <query>`
+- `web search <query>`
+- `google <query>`
+- `look up <query>`
+
 **Example queries:**
-- "Tell me about the DEGEN project"
-- "What is BRETT token?"
-- "Latest news on Base ecosystem"
+- "search web for Bitcoin news"
+- "web search DEGEN token"
+- "look up Base ecosystem"
 
 ### 💬 Conversational Memory
 The CLI remembers context from your conversation in interactive mode:
