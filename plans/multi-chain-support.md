@@ -104,7 +104,7 @@ default_chain: str = Field(default="base", alias="DEFAULT_CHAIN")
 ```python
 def detect_chain_from_address(address: str) -> str:
     if ADDRESS_PATTERN.match(address):
-        return "base"  # or other EVM chain
+        return "base"  # EVM address detected, default to Base (could be any EVM chain)
     if SOLANA_ADDRESS_PATTERN.match(address):
         return "solana"
     return "unknown"

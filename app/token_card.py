@@ -180,6 +180,10 @@ def format_boosted_token(token: Dict[str, Any]) -> str:
     Returns:
         Formatted Telegram MarkdownV2 message.
     """
+    # Constants for display limits
+    MAX_NAME_LENGTH = 50
+    MAX_DESCRIPTION_LENGTH = 100
+
     # Extract token info
     address = token.get("tokenAddress") or ""
     chain_id = token.get("chainId") or "unknown"
@@ -194,36 +198,37 @@ def format_boosted_token(token: Dict[str, Any]) -> str:
     telegram = None
     for link in links:
         if isinstance(link, dict):
-            link_type = link.get("type", "")
+            link_type = link.get("type")
             link_url = link.get("url", "")
             if link_type == "twitter" and not twitter:
                 twitter = link_url
             elif link_type == "telegram" and not telegram:
                 telegram = link_url
-            elif not link_type and not website:
+            elif link_type in (None, "") and not website:
                 website = link_url
 
     lines = []
 
     # Title - try to extract name from description or use chain
     # Boosted tokens don't have a name field, use first line of description
-    name = "Boosted Token"
+    display_name = "Boosted Token"
+    first_line = ""
     if description:
         first_line = description.split("\n")[0].strip()
-        if len(first_line) < 50:
-            name = first_line
+        if len(first_line) < MAX_NAME_LENGTH:
+            display_name = first_line
         else:
-            name = first_line[:47] + "..."
+            display_name = first_line[: MAX_NAME_LENGTH - 3] + "..."
 
-    lines.append(f"*{escape_markdown(name)}*")
+    lines.append(f"*{escape_markdown(display_name)}*")
 
     # Chain and boost amount
     lines.append(escape_markdown(f"⛓️ {chain_id.title()} · 🚀 Boost: {boost_amount}"))
 
-    # Truncated description (if different from name)
-    if description and description.split("\n")[0].strip() != name:
-        short_desc = description[:100].replace("\n", " ")
-        if len(description) > 100:
+    # Truncated description (if different from display name)
+    if description and first_line != display_name:
+        short_desc = description[:MAX_DESCRIPTION_LENGTH].replace("\n", " ")
+        if len(description) > MAX_DESCRIPTION_LENGTH:
             short_desc += "..."
         lines.append(f"_{escape_markdown(short_desc)}_")
 
