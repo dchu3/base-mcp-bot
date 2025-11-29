@@ -78,6 +78,20 @@ class Settings(BaseSettings):
         default=2, alias="PLANNER_MAX_ITERATIONS", ge=1, le=5
     )
 
+    # Planner mode: "simple" (pattern-based), "agentic" (LLM decides), "hybrid" (both)
+    planner_mode: str = Field(default="simple", alias="PLANNER_MODE")
+
+    # Agentic planner settings
+    agentic_max_iterations: int = Field(
+        default=5, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=10
+    )
+    agentic_max_tool_calls: int = Field(
+        default=20, alias="AGENTIC_MAX_TOOL_CALLS", ge=1, le=50
+    )
+    agentic_timeout_seconds: int = Field(
+        default=60, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
+    )
+
 
 @lru_cache(maxsize=1)
 def load_settings() -> Settings:

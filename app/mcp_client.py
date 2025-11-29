@@ -7,9 +7,12 @@ import json
 import shlex
 import uuid
 from asyncio.subprocess import Process
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from app.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    import google.generativeai as genai
 
 logger = get_logger(__name__)
 
@@ -47,6 +50,16 @@ class MCPClient:
     def tools(self) -> list[Dict[str, Any]]:
         """Return the list of tools available on this server."""
         return self._tools
+
+    def to_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+        """Convert MCP tools to Gemini function declarations.
+
+        Returns:
+            List of Gemini FunctionDeclaration protos, namespaced as client_method
+        """
+        from app.tool_converter import convert_mcp_tools_to_gemini
+
+        return convert_mcp_tools_to_gemini(self.name, self._tools)
 
     async def start(self) -> None:
         """Launch the MCP server process if it is not already running."""
@@ -513,3 +526,46 @@ class MCPManager:
                     all_tools.append(tool_copy)
 
         return all_tools
+
+    def get_gemini_functions(self) -> List["genai.protos.FunctionDeclaration"]:
+        """Get all MCP tools as Gemini function declarations.
+
+        Returns:
+            List of Gemini FunctionDeclaration protos from all clients
+        """
+        all_functions: List["genai.protos.FunctionDeclaration"] = []
+        clients = [self.base, self.dexscreener]
+        if self.honeypot:
+            clients.append(self.honeypot)
+        if self.websearch:
+            clients.append(self.websearch)
+        if self.dexpaprika:
+            clients.append(self.dexpaprika)
+
+        for client in clients:
+            all_functions.extend(client.to_gemini_functions())
+
+        logger.info(
+            "gemini_functions_loaded",
+            total=len(all_functions),
+            clients=[c.name for c in clients],
+        )
+        return all_functions
+
+    def get_client(self, name: str) -> Optional[MCPClient]:
+        """Get an MCP client by name.
+
+        Args:
+            name: Client name (e.g., 'dexpaprika', 'honeypot')
+
+        Returns:
+            MCPClient instance or None if not found/configured
+        """
+        clients = {
+            "base": self.base,
+            "dexscreener": self.dexscreener,
+            "honeypot": self.honeypot,
+            "websearch": self.websearch,
+            "dexpaprika": self.dexpaprika,
+        }
+        return clients.get(name)
