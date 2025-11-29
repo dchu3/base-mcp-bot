@@ -121,7 +121,10 @@ def format_token_card(
 
     # Address (truncated)
     if address:
-        short_addr = f"{address[:6]}...{address[-4:]}"
+        if len(address) <= 10:
+            short_addr = address
+        else:
+            short_addr = f"{address[:6]}...{address[-4:]}"
         lines.append(f"📍 `{short_addr}`")
 
     # Safety badge (if honeypot data provided)
@@ -163,6 +166,134 @@ def format_token_list(tokens: List[Dict[str, Any]], max_tokens: int = 5) -> str:
 
     if len(tokens) > max_tokens:
         remaining = len(tokens) - max_tokens
+        result += f"\n\n_{escape_markdown(f'... and {remaining} more')}_"
+
+    return result
+
+
+def format_boosted_token(token: Dict[str, Any]) -> str:
+    """Format a Dexscreener boosted token profile.
+
+    Boosted tokens have a different structure than trading pairs -
+    they contain profile info (description, links) but no price data.
+
+    Args:
+        token: Boosted token data from getLatestBoostedTokens.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    # Constants for display limits
+    MAX_NAME_LENGTH = 50
+    MAX_DESCRIPTION_LENGTH = 100
+
+    # Extract token info
+    address = token.get("tokenAddress") or ""
+    chain_id = token.get("chainId") or "unknown"
+    description = token.get("description") or ""
+    url = token.get("url") or ""
+    boost_amount = token.get("amount") or token.get("totalAmount") or 0
+
+    # Extract links
+    links = token.get("links", [])
+    website = None
+    twitter = None
+    telegram = None
+    for link in links:
+        if isinstance(link, dict):
+            link_type = link.get("type")
+            link_url = link.get("url", "")
+            if link_type == "twitter" and not twitter:
+                twitter = link_url
+            elif link_type == "telegram" and not telegram:
+                telegram = link_url
+            elif link_type in (None, "") and not website:
+                website = link_url
+
+    lines = []
+
+    # Title - try to extract name from description or use chain
+    # Boosted tokens don't have a name field, use first line of description
+    display_name = "Boosted Token"
+    first_line = ""
+    if description:
+        first_line = description.split("\n")[0].strip()
+        if len(first_line) < MAX_NAME_LENGTH:
+            display_name = first_line
+        else:
+            display_name = first_line[: MAX_NAME_LENGTH - 3] + "..."
+
+    lines.append(f"*{escape_markdown(display_name)}*")
+
+    # Chain and boost amount
+    lines.append(escape_markdown(f"⛓️ {chain_id.title()} · 🚀 Boost: {boost_amount}"))
+
+    # Truncated description (if different from display name)
+    if description and first_line != display_name:
+        short_desc = description[:MAX_DESCRIPTION_LENGTH].replace("\n", " ")
+        if len(description) > MAX_DESCRIPTION_LENGTH:
+            short_desc += "..."
+        lines.append(f"_{escape_markdown(short_desc)}_")
+
+    # Address (truncated)
+    if address:
+        if len(address) <= 10:
+            short_addr = address
+        else:
+            short_addr = f"{address[:6]}...{address[-4:]}"
+        lines.append(f"📍 `{short_addr}`")
+
+    # Social links
+    socials = []
+    if twitter:
+        socials.append(f"[Twitter]({escape_markdown_url(twitter)})")
+    if telegram:
+        socials.append(f"[Telegram]({escape_markdown_url(telegram)})")
+    if website:
+        socials.append(f"[Website]({escape_markdown_url(website)})")
+    if socials:
+        lines.append(" · ".join(socials))
+
+    # Dexscreener link
+    if url:
+        safe_url = escape_markdown_url(url)
+        lines.append(f"[View on Dexscreener]({safe_url})")
+
+    return "\n".join(lines)
+
+
+def format_boosted_token_list(
+    tokens: List[Dict[str, Any]], max_tokens: int = 5
+) -> str:
+    """Format a list of boosted tokens.
+
+    Args:
+        tokens: List of boosted token data from getLatestBoostedTokens.
+        max_tokens: Maximum number of tokens to display.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    if not tokens:
+        return escape_markdown("No boosted tokens found.")
+
+    # Deduplicate by token address (boosted tokens can appear multiple times)
+    seen = set()
+    unique_tokens = []
+    for token in tokens:
+        addr = token.get("tokenAddress", "")
+        if addr and addr not in seen:
+            seen.add(addr)
+            unique_tokens.append(token)
+
+    cards = []
+    for token in unique_tokens[:max_tokens]:
+        cards.append(format_boosted_token(token))
+
+    result = "\n\n".join(cards)
+
+    if len(unique_tokens) > max_tokens:
+        remaining = len(unique_tokens) - max_tokens
         result += f"\n\n_{escape_markdown(f'... and {remaining} more')}_"
 
     return result
@@ -402,3 +533,64 @@ def _format_change(change: Any) -> str:
         return f"(📉 {pct:.1f}%)"
     else:
         return "(→ 0%)"
+
+
+def format_pool_list(
+    pools: List[Dict[str, Any]],
+    network: str = "base",
+    max_pools: int = 5,
+) -> str:
+    """Format DexPaprika pool data as a Telegram card list.
+
+    Args:
+        pools: List of pool data from DexPaprika getNetworkPools.
+        network: Network name for display.
+        max_pools: Maximum number of pools to display.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    if not pools:
+        return escape_markdown(f"No pools found on {network}.")
+
+    lines = []
+    lines.append(f"*🏊 Top Pools on {escape_markdown(network.title())}*")
+    lines.append("")
+
+    for i, pool in enumerate(pools[:max_pools], 1):
+        # Extract pool info
+        dex_name = pool.get("dex_name") or pool.get("dex_id") or "Unknown DEX"
+        volume_usd = pool.get("volume_usd") or 0
+        price_usd = pool.get("price_usd") or 0
+        txns = pool.get("transactions") or 0
+        price_change_24h = pool.get("last_price_change_usd_24h")
+
+        # Get token pair
+        tokens = pool.get("tokens", [])
+        if len(tokens) >= 2:
+            pair = f"{tokens[0].get('symbol', '?')}/{tokens[1].get('symbol', '?')}"
+        elif len(tokens) == 1:
+            pair = tokens[0].get("symbol", "?")
+        else:
+            pair = "Unknown"
+
+        # Build pool entry
+        lines.append(f"*{i}\\. {escape_markdown(pair)}* \\({escape_markdown(dex_name)}\\)")
+
+        # Volume and price
+        vol_str = f"📊 Vol: ${_format_number(volume_usd)}"
+        price_str = f"💰 ${_format_number(price_usd)}"
+        if price_change_24h is not None:
+            change_str = _format_change(price_change_24h)
+            price_str += f" {change_str}"
+        lines.append(escape_markdown(f"{vol_str} · {price_str}"))
+
+        # Transactions
+        lines.append(escape_markdown(f"🔄 {_format_number(txns)} txns (24h)"))
+        lines.append("")
+
+    if len(pools) > max_pools:
+        remaining = len(pools) - max_pools
+        lines.append(f"_{escape_markdown(f'... and {remaining} more pools')}_")
+
+    return "\n".join(lines)

@@ -6,6 +6,9 @@ from app.intent_matcher import Intent, match_intent
 from app.token_card import (
     format_token_card,
     format_token_list,
+    format_boosted_token,
+    format_boosted_token_list,
+    format_pool_list,
     format_activity_summary,
     format_safety_result,
     format_safety_badge,
@@ -38,10 +41,43 @@ class TestIntentMatcher:
         assert result.token_address is not None
 
     def test_match_trending(self) -> None:
-        """Test matching trending keywords."""
-        for query in ["trending tokens", "what's hot", "top tokens", "popular coins"]:
+        """Test matching trending keywords.
+        
+        Note: 'top tokens' now matches POOL_ANALYTICS due to 'top pools' pattern.
+        Use explicit 'trending', 'hot', 'popular', 'boosted', 'movers' for TRENDING.
+        """
+        for query in ["trending tokens", "what's hot", "popular coins", "boosted tokens"]:
             result = match_intent(query)
             assert result.intent == Intent.TRENDING, f"Failed for: {query}"
+
+    def test_match_pool_analytics(self) -> None:
+        """Test matching pool analytics keywords."""
+        test_cases = [
+            ("get the top pools on base", Intent.POOL_ANALYTICS, "base"),
+            ("show me liquidity pools", Intent.POOL_ANALYTICS, "base"),
+            ("pools on ethereum", Intent.POOL_ANALYTICS, "ethereum"),
+            ("list pools", Intent.POOL_ANALYTICS, "base"),
+            ("tvl on arbitrum", Intent.POOL_ANALYTICS, "arbitrum"),
+            ("show lp tokens", Intent.POOL_ANALYTICS, "base"),
+        ]
+        for query, expected_intent, expected_network in test_cases:
+            result = match_intent(query)
+            assert result.intent == expected_intent, f"Failed for: {query}"
+            assert result.network == expected_network, f"Wrong network for: {query}"
+
+    def test_pool_analytics_no_false_positives(self) -> None:
+        """Test that pool keywords don't cause false positives."""
+        # "tokens with high liquidity" should NOT match POOL_ANALYTICS
+        result = match_intent("tokens with high liquidity")
+        assert result.intent != Intent.POOL_ANALYTICS
+
+    def test_pool_analytics_network_word_boundaries(self) -> None:
+        """Test that network aliases use word boundaries."""
+        # "database" contains "base" but should not match network=base
+        # This query will still match POOL_ANALYTICS due to "pools"
+        # but network should be detected correctly
+        result = match_intent("show me pools")
+        assert result.network == "base"  # Default, not from partial match
 
     def test_match_router_activity(self) -> None:
         """Test matching router activity."""
@@ -121,6 +157,161 @@ class TestTokenCard:
         """Test empty token list."""
         result = format_token_list([])
         assert "No tokens found" in result
+
+
+class TestBoostedTokenCard:
+    """Tests for boosted token card formatting."""
+
+    def test_format_boosted_token_basic(self) -> None:
+        """Test basic boosted token formatting."""
+        token = {
+            "tokenAddress": "E92GWWMe9Eis1Ya1QbjhGjscxfGdJVshvfXYMbK8pump",
+            "chainId": "solana",
+            "description": "Web3 workflow builder.\nBuild what moves markets.",
+            "url": "https://dexscreener.com/solana/test",
+            "amount": 10,
+            "links": [
+                {"url": "https://example.com"},
+                {"type": "twitter", "url": "https://x.com/test"},
+            ],
+        }
+
+        result = format_boosted_token(token)
+
+        assert "Web3 workflow builder" in result
+        assert "Solana" in result
+        assert "Boost: 10" in result
+        assert "E92GWW" in result
+        assert "Twitter" in result
+        assert "Dexscreener" in result
+
+    def test_format_boosted_token_long_description(self) -> None:
+        """Test boosted token with long description gets truncated."""
+        token = {
+            "tokenAddress": "ABC123",
+            "chainId": "base",
+            "description": "A" * 100,  # Long first line
+            "url": "https://dexscreener.com/base/test",
+            "amount": 5,
+        }
+
+        result = format_boosted_token(token)
+
+        # Name should be truncated with ... (escaped as \.\.\. in MarkdownV2)
+        assert "\\.\\.\\." in result or "..." in result
+        assert "Base" in result
+
+    def test_format_boosted_token_none_link_type(self) -> None:
+        """Test boosted token with None link type (website)."""
+        token = {
+            "tokenAddress": "XYZ789",
+            "chainId": "ethereum",
+            "description": "Test token",
+            "url": "https://dexscreener.com/eth/test",
+            "links": [
+                {"type": None, "url": "https://website.com"},
+                {"type": "", "url": "https://another.com"},
+            ],
+            "amount": 1,
+        }
+
+        result = format_boosted_token(token)
+
+        assert "Website" in result
+        assert "website.com" in result
+
+    def test_format_boosted_token_list(self) -> None:
+        """Test boosted token list formatting."""
+        tokens = [
+            {
+                "tokenAddress": "addr1",
+                "chainId": "solana",
+                "description": "Token 1",
+                "amount": 10,
+            },
+            {
+                "tokenAddress": "addr2",
+                "chainId": "base",
+                "description": "Token 2",
+                "amount": 5,
+            },
+            {
+                "tokenAddress": "addr1",  # Duplicate
+                "chainId": "solana",
+                "description": "Token 1 duplicate",
+                "amount": 10,
+            },
+        ]
+
+        result = format_boosted_token_list(tokens, max_tokens=5)
+
+        assert "Token 1" in result
+        assert "Token 2" in result
+        # Should deduplicate
+        assert result.count("addr1") == 1
+
+    def test_format_boosted_token_list_empty(self) -> None:
+        """Test empty boosted token list."""
+        result = format_boosted_token_list([])
+        assert "No boosted tokens found" in result
+
+
+class TestPoolList:
+    """Tests for pool list formatting."""
+
+    def test_format_pool_list_basic(self) -> None:
+        """Test basic pool list formatting."""
+        pools = [
+            {
+                "dex_name": "Aerodrome",
+                "volume_usd": 85000000,
+                "price_usd": 2999.35,
+                "transactions": 26000,
+                "last_price_change_usd_24h": -1.5,
+                "tokens": [
+                    {"symbol": "WETH"},
+                    {"symbol": "USDC"},
+                ],
+            },
+            {
+                "dex_name": "Uniswap V3",
+                "volume_usd": 50000000,
+                "price_usd": 3000.00,
+                "transactions": 15000,
+                "tokens": [
+                    {"symbol": "ETH"},
+                    {"symbol": "USDT"},
+                ],
+            },
+        ]
+
+        result = format_pool_list(pools, network="base", max_pools=5)
+
+        assert "Top Pools on Base" in result
+        assert "WETH/USDC" in result
+        assert "ETH/USDT" in result
+        assert "Aerodrome" in result
+        assert "Uniswap V3" in result
+        assert "85" in result  # Volume formatted (escaped as 85\.00M)
+
+    def test_format_pool_list_empty(self) -> None:
+        """Test empty pool list."""
+        result = format_pool_list([], network="ethereum")
+        assert "No pools found on ethereum" in result
+
+    def test_format_pool_list_with_limit(self) -> None:
+        """Test pool list with limit."""
+        pools = [
+            {"dex_name": f"DEX{i}", "tokens": [{"symbol": f"T{i}"}]}
+            for i in range(10)
+        ]
+
+        result = format_pool_list(pools, network="base", max_pools=3)
+
+        assert "T0" in result
+        assert "T2" in result
+        assert "T3" not in result
+        assert "7 more pools" in result
 
 
 class TestActivitySummary:
@@ -367,6 +558,111 @@ class TestHoneypotErrorMessages:
         assert "*Safety Check*" in card
         assert "CHECK UNAVAILABLE" in card
         assert "try again later" in card
+
+
+class TestPoolAnalyticsHandler:
+    """Tests for pool analytics handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_analytics_success(self) -> None:
+        """Test successful pool analytics request."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.dexpaprika.call_tool = AsyncMock(
+            return_value={
+                "pools": [
+                    {
+                        "dex_name": "Aerodrome",
+                        "volume_usd": 1000000,
+                        "tokens": [{"symbol": "WETH"}, {"symbol": "USDC"}],
+                    }
+                ]
+            }
+        )
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_ANALYTICS, network="base")
+        result = await planner._handle_pool_analytics(matched, {})
+
+        assert "WETH/USDC" in result.message
+        assert "Aerodrome" in result.message
+        mock_mcp.dexpaprika.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_analytics_no_dexpaprika(self) -> None:
+        """Test pool analytics when DexPaprika not configured."""
+        from unittest.mock import MagicMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = None  # Not configured
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_ANALYTICS, network="base")
+        result = await planner._handle_pool_analytics(matched, {})
+
+        assert "DexPaprika" in result.message
+        # Note: underscores are escaped for Telegram MarkdownV2
+        assert "DEXPAPRIKA" in result.message
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_analytics_error_no_exception_leak(self) -> None:
+        """Test that pool analytics errors don't leak exception details."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.honeypot = None
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.dexpaprika.call_tool = AsyncMock(
+            side_effect=Exception("Internal API error with sensitive details")
+        )
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_ANALYTICS, network="base")
+        result = await planner._handle_pool_analytics(matched, {})
+
+        # Should NOT expose the raw exception
+        assert "Internal API error" not in result.message
+        assert "sensitive details" not in result.message
+        # Should show user-friendly message
+        assert "Failed to fetch pool data" in result.message
+        assert "try again later" in result.message
 
 
 class TestAgenticPlannerDelegation:

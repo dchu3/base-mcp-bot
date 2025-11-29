@@ -45,6 +45,10 @@ class Settings(BaseSettings):
         default="",
         alias="MCP_WEBSEARCH_CMD",
     )
+    mcp_dexpaprika_cmd: str = Field(
+        default="",
+        alias="MCP_DEXPAPRIKA_CMD",
+    )
 
     default_lookback_minutes: int = Field(
         default=30,

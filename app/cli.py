@@ -223,6 +223,7 @@ Examples:
         dexscreener_cmd=settings.mcp_dexscreener_cmd,
         honeypot_cmd=settings.mcp_honeypot_cmd,
         websearch_cmd=settings.mcp_websearch_cmd,
+        dexpaprika_cmd=settings.mcp_dexpaprika_cmd,
     )
 
     try:

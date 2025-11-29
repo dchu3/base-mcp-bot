@@ -10,7 +10,9 @@ from app.planner_types import PlannerResult
 from app.token_card import (
     format_token_card,
     format_token_list,
+    format_boosted_token_list,
     format_activity_summary,
+    format_pool_list,
     format_safety_result,
     format_swap_activity,
 )
@@ -97,6 +99,9 @@ class SimplePlanner:
 
             elif matched.intent == Intent.TRENDING:
                 return await self._handle_trending(context)
+
+            elif matched.intent == Intent.POOL_ANALYTICS:
+                return await self._handle_pool_analytics(matched, context)
 
             elif matched.intent == Intent.ROUTER_ACTIVITY:
                 return await self._handle_router_activity(matched, context)
@@ -218,12 +223,68 @@ class SimplePlanner:
                 tokens=[],
             )
 
-        # Format list
+        # Format list using boosted token formatter
         max_results = context.get("max_results", 5)
-        intro = "*🔥 Trending Tokens*\n\n"
-        card = format_token_list(base_tokens, max_tokens=max_results)
+        intro = "*🔥 Trending/Boosted Tokens*\n\n"
+        card = format_boosted_token_list(base_tokens, max_tokens=max_results)
 
         return PlannerResult(message=intro + card, tokens=base_tokens[:max_results])
+
+    async def _handle_pool_analytics(
+        self, matched: MatchedIntent, context: Dict[str, Any]
+    ) -> PlannerResult:
+        """Handle pool/liquidity analytics request using DexPaprika."""
+        network = matched.network or "base"
+        logger.info("pool_analytics", network=network)
+
+        # Check if DexPaprika is available
+        if not self.mcp_manager.dexpaprika:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Pool analytics requires DexPaprika. "
+                    "Set MCP_DEXPAPRIKA_CMD in your .env file."
+                ),
+                tokens=[],
+            )
+
+        try:
+            max_results = context.get("max_results", 5)
+            result = await self.mcp_manager.dexpaprika.call_tool(
+                "getNetworkPools",
+                {
+                    "network": network,
+                    "orderBy": "volume_usd",
+                    "limit": max_results,
+                    "sort": "desc",
+                },
+            )
+
+            # Extract pools from result
+            pools = []
+            if isinstance(result, dict):
+                pools = result.get("pools", [])
+            elif isinstance(result, list):
+                pools = result
+
+            if not pools:
+                return PlannerResult(
+                    message=escape_markdown(
+                        f"No pools found on {network.title()}."
+                    ),
+                    tokens=[],
+                )
+
+            card = format_pool_list(pools, network=network, max_pools=max_results)
+            return PlannerResult(message=card, tokens=[])
+
+        except Exception as exc:
+            logger.error("pool_analytics_error", network=network, error=str(exc))
+            return PlannerResult(
+                message=escape_markdown(
+                    "Failed to fetch pool data. Please try again later."
+                ),
+                tokens=[],
+            )
 
     async def _handle_router_activity(
         self, matched: MatchedIntent, context: Dict[str, Any]

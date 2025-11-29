@@ -452,6 +452,7 @@ class MCPManager:
         dexscreener_cmd: str,
         honeypot_cmd: str | None = None,
         websearch_cmd: str | None = None,
+        dexpaprika_cmd: str | None = None,
     ) -> None:
         self.base = MCPClient("base", base_cmd)
         self.dexscreener = MCPClient("dexscreener", dexscreener_cmd)
@@ -465,6 +466,11 @@ class MCPManager:
             if websearch_cmd and websearch_cmd.strip()
             else None
         )
+        self.dexpaprika = (
+            MCPClient("dexpaprika", dexpaprika_cmd)
+            if dexpaprika_cmd and dexpaprika_cmd.strip()
+            else None
+        )
 
     async def start(self) -> None:
         tasks = [self.base.start(), self.dexscreener.start()]
@@ -472,6 +478,8 @@ class MCPManager:
             tasks.append(self.honeypot.start())
         if self.websearch:
             tasks.append(self.websearch.start())
+        if self.dexpaprika:
+            tasks.append(self.dexpaprika.start())
         await asyncio.gather(*tasks)
 
     async def shutdown(self) -> None:
@@ -480,6 +488,8 @@ class MCPManager:
             tasks.append(self.honeypot.stop())
         if self.websearch:
             tasks.append(self.websearch.stop())
+        if self.dexpaprika:
+            tasks.append(self.dexpaprika.stop())
         await asyncio.gather(*tasks)
 
     def get_available_tools(self) -> list[Dict[str, Any]]:
@@ -490,6 +500,8 @@ class MCPManager:
             clients.append(self.honeypot)
         if self.websearch:
             clients.append(self.websearch)
+        if self.dexpaprika:
+            clients.append(self.dexpaprika)
 
         for client in clients:
             for tool in client.tools:
