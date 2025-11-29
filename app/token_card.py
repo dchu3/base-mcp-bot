@@ -168,6 +168,126 @@ def format_token_list(tokens: List[Dict[str, Any]], max_tokens: int = 5) -> str:
     return result
 
 
+def format_boosted_token(token: Dict[str, Any]) -> str:
+    """Format a Dexscreener boosted token profile.
+
+    Boosted tokens have a different structure than trading pairs -
+    they contain profile info (description, links) but no price data.
+
+    Args:
+        token: Boosted token data from getLatestBoostedTokens.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    # Extract token info
+    address = token.get("tokenAddress") or ""
+    chain_id = token.get("chainId") or "unknown"
+    description = token.get("description") or ""
+    url = token.get("url") or ""
+    boost_amount = token.get("amount") or token.get("totalAmount") or 0
+
+    # Extract links
+    links = token.get("links", [])
+    website = None
+    twitter = None
+    telegram = None
+    for link in links:
+        if isinstance(link, dict):
+            link_type = link.get("type", "")
+            link_url = link.get("url", "")
+            if link_type == "twitter" and not twitter:
+                twitter = link_url
+            elif link_type == "telegram" and not telegram:
+                telegram = link_url
+            elif not link_type and not website:
+                website = link_url
+
+    lines = []
+
+    # Title - try to extract name from description or use chain
+    # Boosted tokens don't have a name field, use first line of description
+    name = "Boosted Token"
+    if description:
+        first_line = description.split("\n")[0].strip()
+        if len(first_line) < 50:
+            name = first_line
+        else:
+            name = first_line[:47] + "..."
+
+    lines.append(f"*{escape_markdown(name)}*")
+
+    # Chain and boost amount
+    lines.append(escape_markdown(f"⛓️ {chain_id.title()} · 🚀 Boost: {boost_amount}"))
+
+    # Truncated description (if different from name)
+    if description and description.split("\n")[0].strip() != name:
+        short_desc = description[:100].replace("\n", " ")
+        if len(description) > 100:
+            short_desc += "..."
+        lines.append(f"_{escape_markdown(short_desc)}_")
+
+    # Address (truncated)
+    if address:
+        short_addr = f"{address[:6]}...{address[-4:]}"
+        lines.append(f"📍 `{short_addr}`")
+
+    # Social links
+    socials = []
+    if twitter:
+        socials.append(f"[Twitter]({escape_markdown_url(twitter)})")
+    if telegram:
+        socials.append(f"[Telegram]({escape_markdown_url(telegram)})")
+    if website:
+        socials.append(f"[Website]({escape_markdown_url(website)})")
+    if socials:
+        lines.append(" · ".join(socials))
+
+    # Dexscreener link
+    if url:
+        safe_url = escape_markdown_url(url)
+        lines.append(f"[View on Dexscreener]({safe_url})")
+
+    return "\n".join(lines)
+
+
+def format_boosted_token_list(
+    tokens: List[Dict[str, Any]], max_tokens: int = 5
+) -> str:
+    """Format a list of boosted tokens.
+
+    Args:
+        tokens: List of boosted token data from getLatestBoostedTokens.
+        max_tokens: Maximum number of tokens to display.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    if not tokens:
+        return escape_markdown("No boosted tokens found.")
+
+    # Deduplicate by token address (boosted tokens can appear multiple times)
+    seen = set()
+    unique_tokens = []
+    for token in tokens:
+        addr = token.get("tokenAddress", "")
+        if addr and addr not in seen:
+            seen.add(addr)
+            unique_tokens.append(token)
+
+    cards = []
+    for token in unique_tokens[:max_tokens]:
+        cards.append(format_boosted_token(token))
+
+    result = "\n\n".join(cards)
+
+    if len(unique_tokens) > max_tokens:
+        remaining = len(unique_tokens) - max_tokens
+        result += f"\n\n_{escape_markdown(f'... and {remaining} more')}_"
+
+    return result
+
+
 def format_activity_summary(
     transactions: List[Dict[str, Any]], router_name: Optional[str] = None
 ) -> str:

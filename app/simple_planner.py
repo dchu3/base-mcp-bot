@@ -10,6 +10,7 @@ from app.planner_types import PlannerResult
 from app.token_card import (
     format_token_card,
     format_token_list,
+    format_boosted_token_list,
     format_activity_summary,
     format_pool_list,
     format_safety_result,
@@ -222,10 +223,10 @@ class SimplePlanner:
                 tokens=[],
             )
 
-        # Format list
+        # Format list using boosted token formatter
         max_results = context.get("max_results", 5)
-        intro = "*🔥 Trending Tokens*\n\n"
-        card = format_token_list(base_tokens, max_tokens=max_results)
+        intro = "*🔥 Trending/Boosted Tokens*\n\n"
+        card = format_boosted_token_list(base_tokens, max_tokens=max_results)
 
         return PlannerResult(message=intro + card, tokens=base_tokens[:max_results])
 
