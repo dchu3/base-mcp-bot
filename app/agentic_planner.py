@@ -88,7 +88,7 @@ class AgenticPlanner:
         self,
         api_key: str,
         mcp_manager: MCPManager,
-        model_name: str = "gemini-1.5-flash-latest",
+        model_name: str = "gemini-2.0-flash-lite",
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
