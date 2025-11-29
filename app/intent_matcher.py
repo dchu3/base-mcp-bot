@@ -38,7 +38,16 @@ class MatchedIntent:
 # Regex patterns
 ADDRESS_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
 TRENDING_KEYWORDS = {"trending", "hot", "popular", "boosted", "movers"}
-# POOL_KEYWORDS moved to regex patterns in match_intent() for more precise matching
+# Pool patterns for more precise matching (avoid false positives like "tokens with high liquidity")
+POOL_PATTERNS = [
+    r"\bpools?\b",  # "pool" or "pools" as whole word
+    r"\bliquidity\s+pools?\b",  # "liquidity pool(s)"
+    r"\btop\s+pools?\b",  # "top pools"
+    r"\bshow\s+pools?\b",  # "show pools"
+    r"\blist\s+pools?\b",  # "list pools"
+    r"\btvl\b",  # TVL as whole word
+    r"\blp\s+(?:tokens?|positions?)\b",  # "lp tokens" or "lp positions"
+]
 ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume", "transfers"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
 NETWORK_ALIASES = {
@@ -111,17 +120,7 @@ def match_intent(message: str) -> MatchedIntent:
         return MatchedIntent(intent=Intent.TRENDING, confidence=0.9)
 
     # Check for pool/liquidity analytics (before router activity)
-    # Use more specific patterns to avoid false positives like "tokens with high liquidity"
-    pool_patterns = [
-        r"\bpools?\b",  # "pool" or "pools" as whole word
-        r"\bliquidity\s+pools?\b",  # "liquidity pool(s)"
-        r"\btop\s+pools?\b",  # "top pools"
-        r"\bshow\s+pools?\b",  # "show pools"
-        r"\blist\s+pools?\b",  # "list pools"
-        r"\btvl\b",  # TVL as whole word
-        r"\blp\s+(?:tokens?|positions?)\b",  # "lp tokens" or "lp positions"
-    ]
-    if any(re.search(pattern, lower_msg) for pattern in pool_patterns):
+    if any(re.search(pattern, lower_msg) for pattern in POOL_PATTERNS):
         # Extract network if mentioned (use word boundaries to avoid partial matches)
         network = "base"  # Default to Base
         for alias, net_id in NETWORK_ALIASES.items():

@@ -281,7 +281,7 @@ class SimplePlanner:
             logger.error("pool_analytics_error", network=network, error=str(exc))
             return PlannerResult(
                 message=escape_markdown(
-                    f"Failed to fetch pool data: {exc}"
+                    "Failed to fetch pool data. Please try again later."
                 ),
                 tokens=[],
             )

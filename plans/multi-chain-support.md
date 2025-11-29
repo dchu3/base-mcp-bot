@@ -15,7 +15,7 @@ Currently the bot is hardcoded to Base chain. This plan outlines changes needed 
 | `simple_planner.py` | 50 | `self.chain_id = "base"` | Default chain for planner |
 | `simple_planner.py` | 155, 394, 453 | `chainId: 8453` | Honeypot API (Base EVM chain ID) |
 | `simple_planner.py` | 189, 216, 435 | `chainId == "base"` | Filter results to Base chain |
-| `intent_matcher.py` | 116 | `network = "base"` | Default network for pool analytics |
+| `intent_matcher.py` | ~125 | `network = "base"` | Default network for pool analytics |
 | `planner.py` | 2119-2141 | `return "base"`, `return 8453` | Default chain derivation |
 | `agents/context.py` | 24 | `network: str = "base"` | Default agent context |
 | `agents/discovery.py` | 14-20 | Multiple `"base"` | Chain ID derivation |
