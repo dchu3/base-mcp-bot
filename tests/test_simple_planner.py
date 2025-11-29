@@ -41,8 +41,12 @@ class TestIntentMatcher:
         assert result.token_address is not None
 
     def test_match_trending(self) -> None:
-        """Test matching trending keywords."""
-        for query in ["trending tokens", "what's hot", "popular coins"]:
+        """Test matching trending keywords.
+        
+        Note: 'top tokens' now matches POOL_ANALYTICS due to 'top pools' pattern.
+        Use explicit 'trending', 'hot', 'popular', 'boosted', 'movers' for TRENDING.
+        """
+        for query in ["trending tokens", "what's hot", "popular coins", "boosted tokens"]:
             result = match_intent(query)
             assert result.intent == Intent.TRENDING, f"Failed for: {query}"
 
@@ -193,8 +197,8 @@ class TestBoostedTokenCard:
 
         result = format_boosted_token(token)
 
-        # Name should be truncated with ...
-        assert "..." in result
+        # Name should be truncated with ... (escaped as \.\.\. in MarkdownV2)
+        assert "\\.\\.\\." in result or "..." in result
         assert "Base" in result
 
     def test_format_boosted_token_none_link_type(self) -> None:
@@ -307,7 +311,7 @@ class TestPoolList:
         assert "T0" in result
         assert "T2" in result
         assert "T3" not in result
-        assert "7 more" in result
+        assert "7 more pools" in result
 
 
 class TestActivitySummary:

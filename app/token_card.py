@@ -121,7 +121,10 @@ def format_token_card(
 
     # Address (truncated)
     if address:
-        short_addr = f"{address[:6]}...{address[-4:]}"
+        if len(address) <= 10:
+            short_addr = address
+        else:
+            short_addr = f"{address[:6]}...{address[-4:]}"
         lines.append(f"📍 `{short_addr}`")
 
     # Safety badge (if honeypot data provided)
@@ -234,7 +237,10 @@ def format_boosted_token(token: Dict[str, Any]) -> str:
 
     # Address (truncated)
     if address:
-        short_addr = f"{address[:6]}...{address[-4:]}"
+        if len(address) <= 10:
+            short_addr = address
+        else:
+            short_addr = f"{address[:6]}...{address[-4:]}"
         lines.append(f"📍 `{short_addr}`")
 
     # Social links
