@@ -14,6 +14,7 @@ class Intent(Enum):
     TOKEN_LOOKUP = "token_lookup"  # User provided a token address
     TOKEN_SEARCH = "token_search"  # User searching by name/symbol
     TRENDING = "trending"  # User wants trending/hot tokens
+    POOL_ANALYTICS = "pool_analytics"  # User wants pool/liquidity data
     ROUTER_ACTIVITY = "router_activity"  # User wants DEX activity
     SAFETY_CHECK = "safety_check"  # User asking if token is safe
     WEB_SEARCH = "web_search"  # User wants to search the web
@@ -30,14 +31,33 @@ class MatchedIntent:
     router_name: Optional[str] = None
     router_key: Optional[str] = None  # Internal router key (e.g., "uniswap_v2")
     search_query: Optional[str] = None  # Query for web search
+    network: Optional[str] = None  # Target network (e.g., "base", "ethereum")
     confidence: float = 1.0
 
 
 # Regex patterns
 ADDRESS_PATTERN = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
-TRENDING_KEYWORDS = {"trending", "hot", "popular", "top", "boosted", "movers"}
+TRENDING_KEYWORDS = {"trending", "hot", "popular", "boosted", "movers"}
+POOL_KEYWORDS = {"pools", "pool", "liquidity", "tvl", "lp"}
 ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume", "transfers"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
+NETWORK_ALIASES = {
+    "base": "base",
+    "ethereum": "ethereum",
+    "eth": "ethereum",
+    "solana": "solana",
+    "sol": "solana",
+    "arbitrum": "arbitrum",
+    "arb": "arbitrum",
+    "optimism": "optimism",
+    "op": "optimism",
+    "polygon": "polygon",
+    "matic": "polygon",
+    "bsc": "bsc",
+    "binance": "bsc",
+    "avalanche": "avalanche",
+    "avax": "avalanche",
+}
 WEB_SEARCH_PATTERNS = [
     r"search\s+(?:the\s+)?web\s+(?:for\s+)?(.+)",
     r"web\s+search\s+(?:for\s+)?(.+)",
@@ -89,6 +109,20 @@ def match_intent(message: str) -> MatchedIntent:
     # Check for trending/hot tokens
     if any(kw in lower_msg for kw in TRENDING_KEYWORDS):
         return MatchedIntent(intent=Intent.TRENDING, confidence=0.9)
+
+    # Check for pool/liquidity analytics (before router activity)
+    if any(kw in lower_msg for kw in POOL_KEYWORDS):
+        # Extract network if mentioned
+        network = "base"  # Default to Base
+        for alias, net_id in NETWORK_ALIASES.items():
+            if alias in lower_msg:
+                network = net_id
+                break
+        return MatchedIntent(
+            intent=Intent.POOL_ANALYTICS,
+            network=network,
+            confidence=0.9,
+        )
 
     # Check for router/DEX activity
     if any(kw in lower_msg for kw in ACTIVITY_KEYWORDS):

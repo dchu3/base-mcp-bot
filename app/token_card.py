@@ -402,3 +402,64 @@ def _format_change(change: Any) -> str:
         return f"(📉 {pct:.1f}%)"
     else:
         return "(→ 0%)"
+
+
+def format_pool_list(
+    pools: List[Dict[str, Any]],
+    network: str = "base",
+    max_pools: int = 5,
+) -> str:
+    """Format DexPaprika pool data as a Telegram card list.
+
+    Args:
+        pools: List of pool data from DexPaprika getNetworkPools.
+        network: Network name for display.
+        max_pools: Maximum number of pools to display.
+
+    Returns:
+        Formatted Telegram MarkdownV2 message.
+    """
+    if not pools:
+        return escape_markdown(f"No pools found on {network}.")
+
+    lines = []
+    lines.append(f"*🏊 Top Pools on {escape_markdown(network.title())}*")
+    lines.append("")
+
+    for i, pool in enumerate(pools[:max_pools], 1):
+        # Extract pool info
+        dex_name = pool.get("dex_name") or pool.get("dex_id") or "Unknown DEX"
+        volume_usd = pool.get("volume_usd") or 0
+        price_usd = pool.get("price_usd") or 0
+        txns = pool.get("transactions") or 0
+        price_change_24h = pool.get("last_price_change_usd_24h")
+
+        # Get token pair
+        tokens = pool.get("tokens", [])
+        if len(tokens) >= 2:
+            pair = f"{tokens[0].get('symbol', '?')}/{tokens[1].get('symbol', '?')}"
+        elif len(tokens) == 1:
+            pair = tokens[0].get("symbol", "?")
+        else:
+            pair = "Unknown"
+
+        # Build pool entry
+        lines.append(f"*{i}\\. {escape_markdown(pair)}* \\({escape_markdown(dex_name)}\\)")
+
+        # Volume and price
+        vol_str = f"📊 Vol: ${_format_number(volume_usd)}"
+        price_str = f"💰 ${_format_number(price_usd)}"
+        if price_change_24h is not None:
+            change_str = _format_change(price_change_24h)
+            price_str += f" {change_str}"
+        lines.append(escape_markdown(f"{vol_str} · {price_str}"))
+
+        # Transactions
+        lines.append(escape_markdown(f"🔄 {_format_number(txns)} txns (24h)"))
+        lines.append("")
+
+    if len(pools) > max_pools:
+        remaining = len(pools) - max_pools
+        lines.append(f"_{escape_markdown(f'... and {remaining} more pools')}_")
+
+    return "\n".join(lines)
