@@ -15,6 +15,7 @@ class Intent(Enum):
     TOKEN_SEARCH = "token_search"  # User searching by name/symbol
     TRENDING = "trending"  # User wants trending/hot tokens
     POOL_ANALYTICS = "pool_analytics"  # User wants pool/liquidity data
+    POOL_DISCOVERY_SAFETY = "pool_discovery_safety"  # New pools + honeypot check
     ROUTER_ACTIVITY = "router_activity"  # User wants DEX activity
     SAFETY_CHECK = "safety_check"  # User asking if token is safe
     WEB_SEARCH = "web_search"  # User wants to search the web
@@ -47,6 +48,13 @@ POOL_PATTERNS = [
     r"\blist\s+pools?\b",  # "list pools"
     r"\btvl\b",  # TVL as whole word
     r"\blp\s+(?:tokens?|positions?)\b",  # "lp tokens" or "lp positions"
+]
+# Patterns for pool discovery with safety check (new/latest + safe/honeypot)
+POOL_DISCOVERY_SAFETY_PATTERNS = [
+    r"\b(?:latest|new|newest|recent)\b.*\b(?:safe|honeypot|check|scam)\b",
+    r"\b(?:safe|honeypot|check|scam)\b.*\b(?:latest|new|newest|recent)\b",
+    r"\b(?:latest|new|newest|recent)\b.*\btokens?\b.*\b(?:safe|honeypot|check)\b",
+    r"\bdiscover\b.*\b(?:safe|honeypot)\b",
 ]
 ACTIVITY_KEYWORDS = {"activity", "swaps", "trades", "transactions", "volume", "transfers"}
 SAFETY_KEYWORDS = {"safe", "scam", "rug", "honeypot", "risk", "legit"}
@@ -118,6 +126,20 @@ def match_intent(message: str) -> MatchedIntent:
     # Check for trending/hot tokens
     if any(kw in lower_msg for kw in TRENDING_KEYWORDS):
         return MatchedIntent(intent=Intent.TRENDING, confidence=0.9)
+
+    # Check for pool discovery with safety check (before plain pool analytics)
+    # Matches: "latest tokens safe", "new pools honeypot check", etc.
+    if any(re.search(pattern, lower_msg) for pattern in POOL_DISCOVERY_SAFETY_PATTERNS):
+        network = "base"  # Default to Base
+        for alias, net_id in NETWORK_ALIASES.items():
+            if re.search(rf"\b{re.escape(alias)}\b", lower_msg):
+                network = net_id
+                break
+        return MatchedIntent(
+            intent=Intent.POOL_DISCOVERY_SAFETY,
+            network=network,
+            confidence=0.95,
+        )
 
     # Check for pool/liquidity analytics (before router activity)
     if any(re.search(pattern, lower_msg) for pattern in POOL_PATTERNS):

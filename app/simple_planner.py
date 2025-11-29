@@ -100,6 +100,9 @@ class SimplePlanner:
             elif matched.intent == Intent.TRENDING:
                 return await self._handle_trending(context)
 
+            elif matched.intent == Intent.POOL_DISCOVERY_SAFETY:
+                return await self._handle_pool_discovery_safety(matched, context)
+
             elif matched.intent == Intent.POOL_ANALYTICS:
                 return await self._handle_pool_analytics(matched, context)
 
@@ -229,6 +232,186 @@ class SimplePlanner:
         card = format_boosted_token_list(base_tokens, max_tokens=max_results)
 
         return PlannerResult(message=intro + card, tokens=base_tokens[:max_results])
+
+    async def _handle_pool_discovery_safety(
+        self, matched: MatchedIntent, context: Dict[str, Any]
+    ) -> PlannerResult:
+        """Handle pool discovery with honeypot safety check.
+        
+        Fetches latest pools from DexPaprika and runs honeypot checks on each.
+        """
+        network = matched.network or "base"
+        logger.info("pool_discovery_safety", network=network)
+
+        # Check if required MCP servers are available
+        if not self.mcp_manager.dexpaprika:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Pool discovery requires DexPaprika. "
+                    "Set MCP_DEXPAPRIKA_CMD in your .env file."
+                ),
+                tokens=[],
+            )
+
+        if not self.mcp_manager.honeypot:
+            return PlannerResult(
+                message=escape_markdown(
+                    "Safety checks require Honeypot MCP. "
+                    "Set MCP_HONEYPOT_CMD in your .env file."
+                ),
+                tokens=[],
+            )
+
+        # Only EVM chains support honeypot checks
+        if network not in ("base", "ethereum", "arbitrum", "optimism", "polygon", "bsc"):
+            return PlannerResult(
+                message=escape_markdown(
+                    f"Honeypot checks not supported for {network}. "
+                    "Only EVM chains (Base, Ethereum, etc.) are supported."
+                ),
+                tokens=[],
+            )
+
+        try:
+            max_results = context.get("max_results", 5)
+            
+            # Step 1: Get latest pools
+            result = await self.mcp_manager.dexpaprika.call_tool(
+                "getNetworkPools",
+                {
+                    "network": network,
+                    "orderBy": "created_at",
+                    "limit": max_results,
+                    "sort": "desc",
+                },
+            )
+
+            pools = []
+            if isinstance(result, dict):
+                pools = result.get("pools", [])
+            elif isinstance(result, list):
+                pools = result
+
+            if not pools:
+                return PlannerResult(
+                    message=escape_markdown(f"No new pools found on {network.title()}."),
+                    tokens=[],
+                )
+
+            # Step 2: Honeypot check each pool's base token
+            lines = [f"*🔍 New Pools on {escape_markdown(network.title())} with Safety Check*\n"]
+            
+            # Get chain ID for honeypot API
+            chain_id_map = {
+                "base": 8453,
+                "ethereum": 1,
+                "arbitrum": 42161,
+                "optimism": 10,
+                "polygon": 137,
+                "bsc": 56,
+            }
+            chain_id = chain_id_map.get(network, 8453)
+
+            for i, pool in enumerate(pools[:max_results], 1):
+                tokens = pool.get("tokens", [])
+                if not tokens:
+                    continue
+
+                # Get base token (first non-WETH/USDC token)
+                base_token = None
+                for t in tokens:
+                    symbol = t.get("symbol", "").upper()
+                    if symbol not in ("WETH", "USDC", "USDT", "DAI", "ETH"):
+                        base_token = t
+                        break
+                
+                if not base_token:
+                    base_token = tokens[0]
+
+                token_address = base_token.get("id", "")
+                token_symbol = base_token.get("symbol", "?")
+                token_name = base_token.get("name", "")
+                
+                # Format pair name
+                pair_symbols = "/".join(t.get("symbol", "?") for t in tokens[:2])
+                dex_name = pool.get("dex_name", "Unknown DEX")
+                created_at = pool.get("created_at", "")[:16].replace("T", " ")
+
+                # Run honeypot check
+                safety_badge = "⏳"
+                safety_detail = ""
+                try:
+                    if token_address and token_address.startswith("0x"):
+                        hp_result = await self.mcp_manager.honeypot.call_tool(
+                            "check_token",
+                            {"address": token_address, "chainId": chain_id},
+                        )
+                        
+                        # Extract verdict
+                        summary = hp_result.get("summary", {}) if isinstance(hp_result, dict) else {}
+                        verdict = summary.get("verdict", "UNKNOWN")
+                        risk = hp_result.get("risk", {}) if isinstance(hp_result, dict) else {}
+                        risk_level = risk.get("riskLevel") if isinstance(risk, dict) else None
+                        
+                        # Get sell tax if available
+                        sim_result = hp_result.get("simulationResult", {}) if isinstance(hp_result, dict) else {}
+                        sell_tax = sim_result.get("sellTax")
+                        
+                        if verdict in ("SAFE_TO_TRADE", "SAFE", "OK"):
+                            safety_badge = "✅"
+                            safety_detail = "Safe"
+                        elif verdict in ("CAUTION", "WARNING"):
+                            safety_badge = "⚠️"
+                            if sell_tax and float(sell_tax) > 5:
+                                safety_detail = f"Caution \\- {sell_tax}% sell tax"
+                            else:
+                                safety_detail = "Caution"
+                        elif verdict in ("HONEYPOT", "DANGER", "DO_NOT_TRADE"):
+                            safety_badge = "🚨"
+                            if sell_tax and float(sell_tax) >= 100:
+                                safety_detail = "HONEYPOT \\- 100% sell tax"
+                            else:
+                                safety_detail = "DO NOT TRADE"
+                        else:
+                            safety_badge = "❓"
+                            safety_detail = "Unknown"
+                            
+                        if risk_level is not None and risk_level > 50:
+                            safety_detail += f" \\(Risk: {risk_level}\\)"
+                    else:
+                        safety_badge = "❓"
+                        safety_detail = "Invalid address"
+                        
+                except Exception as hp_err:
+                    logger.warning("honeypot_check_failed", token=token_address, error=str(hp_err))
+                    safety_badge = "❓"
+                    safety_detail = "Check failed"
+
+                # Format pool entry
+                lines.append(f"*{i}\\. {escape_markdown(pair_symbols)}* \\({escape_markdown(dex_name)}\\)")
+                lines.append(f"{safety_badge} {safety_detail}")
+                
+                # Token info
+                if token_name and token_name != token_symbol:
+                    lines.append(f"📍 {escape_markdown(token_name)} \\(`{token_address[:8]}...`\\)")
+                else:
+                    lines.append(f"📍 `{token_address[:10]}...{token_address[-4:]}`")
+                
+                lines.append(f"🕐 {escape_markdown(created_at)}")
+                lines.append("")
+
+            lines.append("_⚠️ New tokens are high risk\\. Always DYOR\\._")
+            
+            return PlannerResult(message="\n".join(lines), tokens=[])
+
+        except Exception as exc:
+            logger.error("pool_discovery_safety_error", network=network, error=str(exc))
+            return PlannerResult(
+                message=escape_markdown(
+                    "Failed to fetch pool data. Please try again later."
+                ),
+                tokens=[],
+            )
 
     async def _handle_pool_analytics(
         self, matched: MatchedIntent, context: Dict[str, Any]

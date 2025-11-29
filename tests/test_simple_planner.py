@@ -79,6 +79,33 @@ class TestIntentMatcher:
         result = match_intent("show me pools")
         assert result.network == "base"  # Default, not from partial match
 
+    def test_match_pool_discovery_safety(self) -> None:
+        """Test matching pool discovery with safety check."""
+        test_cases = [
+            ("latest tokens on base and check if safe", "base"),
+            ("get the newest pools and honeypot check", "base"),
+            ("new tokens safe check", "base"),
+            ("show me recent pools honeypot", "base"),
+            ("discover new tokens and check for scams", "base"),
+            ("latest pools on ethereum safe", "ethereum"),
+        ]
+        for query, expected_network in test_cases:
+            result = match_intent(query)
+            assert result.intent == Intent.POOL_DISCOVERY_SAFETY, f"Failed for: {query}"
+            assert result.network == expected_network, f"Wrong network for: {query}"
+
+    def test_pool_discovery_safety_not_plain_pools(self) -> None:
+        """Test that plain pool queries don't trigger discovery+safety."""
+        # These should match POOL_ANALYTICS, not POOL_DISCOVERY_SAFETY
+        plain_queries = [
+            "top pools on base",
+            "show me liquidity pools",
+            "list pools",
+        ]
+        for query in plain_queries:
+            result = match_intent(query)
+            assert result.intent == Intent.POOL_ANALYTICS, f"Should be pool_analytics: {query}"
+
     def test_match_router_activity(self) -> None:
         """Test matching router activity."""
         result = match_intent("show me uniswap activity")
@@ -663,6 +690,163 @@ class TestPoolAnalyticsHandler:
         # Should show user-friendly message
         assert "Failed to fetch pool data" in result.message
         assert "try again later" in result.message
+
+
+class TestPoolDiscoverySafetyHandler:
+    """Tests for pool discovery with safety check handler."""
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_discovery_safety_success(self) -> None:
+        """Test successful pool discovery with safety check."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.dexpaprika.call_tool = AsyncMock(
+            return_value={
+                "pools": [
+                    {
+                        "dex_name": "Uniswap V2",
+                        "created_at": "2025-11-29T21:00:00Z",
+                        "tokens": [
+                            {"id": "0x1234567890abcdef1234567890abcdef12345678", "symbol": "TEST", "name": "Test Token"},
+                            {"id": "0x4200000000000000000000000000000000000006", "symbol": "WETH", "name": "Wrapped Ether"},
+                        ],
+                    }
+                ]
+            }
+        )
+        mock_mcp.honeypot = MagicMock()
+        mock_mcp.honeypot.call_tool = AsyncMock(
+            return_value={
+                "summary": {"verdict": "SAFE_TO_TRADE"},
+                "risk": {"riskLevel": 10},
+            }
+        )
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_DISCOVERY_SAFETY, network="base")
+        result = await planner._handle_pool_discovery_safety(matched, {})
+
+        assert "TEST/WETH" in result.message
+        assert "Safe" in result.message
+        assert "✅" in result.message
+        mock_mcp.dexpaprika.call_tool.assert_awaited_once()
+        mock_mcp.honeypot.call_tool.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_discovery_safety_honeypot_detected(self) -> None:
+        """Test pool discovery detecting a honeypot."""
+        from unittest.mock import MagicMock, AsyncMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.dexpaprika.call_tool = AsyncMock(
+            return_value={
+                "pools": [
+                    {
+                        "dex_name": "Uniswap V2",
+                        "created_at": "2025-11-29T21:00:00Z",
+                        "tokens": [
+                            {"id": "0xbad0000000000000000000000000000000000bad", "symbol": "SCAM", "name": "Scam Token"},
+                            {"id": "0x4200000000000000000000000000000000000006", "symbol": "WETH", "name": "Wrapped Ether"},
+                        ],
+                    }
+                ]
+            }
+        )
+        mock_mcp.honeypot = MagicMock()
+        mock_mcp.honeypot.call_tool = AsyncMock(
+            return_value={
+                "summary": {"verdict": "DO_NOT_TRADE"},
+                "risk": {"riskLevel": 100},
+                "simulationResult": {"sellTax": 100},
+            }
+        )
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_DISCOVERY_SAFETY, network="base")
+        result = await planner._handle_pool_discovery_safety(matched, {})
+
+        assert "SCAM/WETH" in result.message
+        assert "🚨" in result.message
+        assert "HONEYPOT" in result.message or "DO NOT TRADE" in result.message
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_discovery_safety_no_honeypot_mcp(self) -> None:
+        """Test pool discovery when honeypot MCP not configured."""
+        from unittest.mock import MagicMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.honeypot = None  # Not configured
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_DISCOVERY_SAFETY, network="base")
+        result = await planner._handle_pool_discovery_safety(matched, {})
+
+        assert "Honeypot" in result.message
+        assert "HONEYPOT" in result.message  # MCP_HONEYPOT_CMD escaped
+
+    @pytest.mark.asyncio
+    async def test_handle_pool_discovery_safety_unsupported_chain(self) -> None:
+        """Test pool discovery on unsupported chain (Solana)."""
+        from unittest.mock import MagicMock
+        from app.simple_planner import SimplePlanner
+        from app.intent_matcher import MatchedIntent, Intent
+
+        mock_mcp = MagicMock()
+        mock_mcp.dexscreener = MagicMock()
+        mock_mcp.base = MagicMock()
+        mock_mcp.websearch = None
+        mock_mcp.dexpaprika = MagicMock()
+        mock_mcp.honeypot = MagicMock()
+
+        planner = SimplePlanner(
+            api_key="test-key",
+            mcp_manager=mock_mcp,
+            model_name="gemini-1.5-flash",
+            router_map={},
+        )
+
+        matched = MatchedIntent(intent=Intent.POOL_DISCOVERY_SAFETY, network="solana")
+        result = await planner._handle_pool_discovery_safety(matched, {})
+
+        assert "not supported" in result.message
+        assert "solana" in result.message.lower()
 
 
 class TestAgenticPlannerDelegation:
