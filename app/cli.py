@@ -14,12 +14,12 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 
 from app.config import load_settings
 from app.mcp_client import MCPManager
-from app.simple_planner import SimplePlanner
 from app.cli_output import CLIOutput, OutputFormat
+from app.planner_types import PlannerResult
 from app.utils.logging import configure_logging, get_logger
 from app.utils.routers import load_router_map
 
@@ -29,8 +29,16 @@ CLI_LOG_FILE = Path(".tmp/cli.log")
 logger = get_logger(__name__)
 
 
+class Planner(Protocol):
+    """Protocol for planners (SimplePlanner or AgenticPlanner)."""
+
+    async def run(self, message: str, context: Dict[str, Any]) -> PlannerResult:
+        """Execute a query and return a result."""
+        ...
+
+
 async def run_single_query(
-    planner: SimplePlanner,
+    planner: Planner,
     query: str,
     output: CLIOutput,
     context: Dict[str, Any],
@@ -47,7 +55,7 @@ async def run_single_query(
 
 
 async def run_interactive(
-    planner: SimplePlanner,
+    planner: Planner,
     output: CLIOutput,
 ) -> None:
     """Run interactive REPL session."""
@@ -233,15 +241,33 @@ Examples:
         output.error(f"Failed to start MCP servers: {exc}")
         sys.exit(1)
 
-    # Initialize planner
+    # Initialize planner based on mode
     router_map = load_router_map()
-    planner = SimplePlanner(
-        api_key=settings.gemini_api_key,
-        mcp_manager=mcp_manager,
-        model_name=settings.gemini_model,
-        router_map=router_map,
-        enable_ai_insights=not args.no_ai,
-    )
+    planner: Planner
+
+    if settings.planner_mode == "agentic":
+        from app.agentic_planner import AgenticPlanner
+
+        output.status("Using agentic planner (LLM decides tools)")
+        planner = AgenticPlanner(
+            api_key=settings.gemini_api_key,
+            mcp_manager=mcp_manager,
+            model_name=settings.gemini_model,
+            max_iterations=settings.agentic_max_iterations,
+            max_tool_calls=settings.agentic_max_tool_calls,
+            timeout_seconds=settings.agentic_timeout_seconds,
+        )
+    else:
+        from app.simple_planner import SimplePlanner
+
+        output.status("Using simple planner (pattern matching)")
+        planner = SimplePlanner(
+            api_key=settings.gemini_api_key,
+            mcp_manager=mcp_manager,
+            model_name=settings.gemini_model,
+            router_map=router_map,
+            enable_ai_insights=not args.no_ai,
+        )
 
     try:
         if args.interactive:

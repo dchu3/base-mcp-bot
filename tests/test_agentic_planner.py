@@ -204,9 +204,9 @@ class TestAgenticPlanner:
             model_name="gemini-1.5-flash",
         )
 
-        assert planner.max_iterations == 5
-        assert planner.max_tool_calls == 20
-        assert planner.timeout_seconds == 60
+        assert planner.max_iterations == 8
+        assert planner.max_tool_calls == 30
+        assert planner.timeout_seconds == 90
 
     def test_planner_custom_settings(self) -> None:
         """Test planner with custom settings."""

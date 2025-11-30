@@ -78,18 +78,18 @@ class Settings(BaseSettings):
         default=2, alias="PLANNER_MAX_ITERATIONS", ge=1, le=5
     )
 
-    # Planner mode: "simple" (pattern-based), "agentic" (LLM decides), "hybrid" (both)
-    planner_mode: str = Field(default="simple", alias="PLANNER_MODE")
+    # Planner mode: "simple" (pattern-based), "agentic" (LLM decides)
+    planner_mode: str = Field(default="agentic", alias="PLANNER_MODE")
 
     # Agentic planner settings
     agentic_max_iterations: int = Field(
-        default=5, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=10
+        default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15
     )
     agentic_max_tool_calls: int = Field(
-        default=20, alias="AGENTIC_MAX_TOOL_CALLS", ge=1, le=50
+        default=30, alias="AGENTIC_MAX_TOOL_CALLS", ge=1, le=100
     )
     agentic_timeout_seconds: int = Field(
-        default=60, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
+        default=90, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
     )
 
 
