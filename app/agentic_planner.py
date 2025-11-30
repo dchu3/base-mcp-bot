@@ -57,16 +57,29 @@ You can call tools to:
 
 | User Intent | Primary Tool | Parameters | Follow-up |
 |-------------|--------------|------------|-----------|
-| "new tokens" | dexpaprika_getNetworkPools | orderBy="created_at" | honeypot_check_token for each |
+| "new tokens with volume/liquidity" | dexpaprika_getNetworkPools | orderBy="created_at", limit=100 | Filter for volume > 0, then honeypot |
+| "new pools sorted by volume" | dexpaprika_getNetworkPools | orderBy="created_at", limit=100 | Filter for volume > 0, then honeypot |
+| "new tokens" (simple) | dexpaprika_getNetworkPools | orderBy="created_at", limit=20 | honeypot_check if volume > 0 |
 | "top pools" | dexpaprika_getNetworkPools | orderBy="volume_usd" | - |
 | "token price/info" | dexscreener_searchPairs | query=symbol | honeypot_check_token |
 | "is X safe" | dexscreener_searchPairs → honeypot_check_token | - | - |
 | "trending" | dexscreener_getLatestBoostedTokens | - | honeypot_check_token |
 | "router activity" | base_getDexRouterActivity | router name | - |
 
+## Strategy for "New Tokens with Liquidity/Volume"
+When user asks for NEW tokens/pools that also have VOLUME, LIQUIDITY, or asks for them "sorted by volume":
+1. **IMPORTANT**: Use limit=100 to get enough data to filter
+2. Call getNetworkPools with orderBy="created_at", limit=100
+3. Filter results in your analysis for pools where volume_usd > 1000
+4. From filtered pools, extract the non-standard token (not WETH/USDC/USDT/cbBTC)
+5. Run honeypot_check_token on those token addresses (up to 10)
+6. Present only pools that have both: recent creation AND trading volume
+
+Note: Brand new pools often have 0 volume. If no pools pass the filter, explain this and suggest alternatives.
+
 ## DexPaprika Parameters
 - **orderBy**: "volume_usd" (popular), "created_at" (new), "transactions" (active), "last_price_change_usd_24h" (volatile)
-- **limit**: Use 10-20 for display, 30-50 if filtering/analyzing results
+- **limit**: Use 10-20 for display, **100 when user wants new + volume filter**
 - **network**: "base" (default), "ethereum", "solana", "arbitrum", "optimism"
 
 ## Honeypot Check - IMPORTANT
