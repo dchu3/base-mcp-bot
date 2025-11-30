@@ -1,8 +1,34 @@
 # base-mcp-bot
 
-CLI tool for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, Honeypot detection, and web search.
+CLI tool for exploring tokens and DEX activity on Base blockchain. Powered by Gemini AI and MCP servers for Blockscout, Dexscreener, DexPaprika, Honeypot detection, and web search.
 
 ## Features
+
+### 🤖 Agentic Mode (Default)
+The bot now uses **full agentic mode** by default - the LLM decides which tools to call, runs them in parallel, and synthesizes natural language responses. This provides Copilot CLI-like behavior:
+
+- **Dynamic tool selection** - LLM analyzes your query and picks the right tools
+- **Parallel execution** - Multiple tool calls run simultaneously
+- **Multi-turn reasoning** - Complex queries handled in multiple steps
+- **Natural responses** - Results synthesized into conversational format
+
+**Example queries:**
+- "list top 10 new tokens on base with good liquidity pools"
+- "check if PEPE is safe and show me its pools"
+- "show me uniswap activity and find any new tokens"
+
+### 🏊 Pool Analytics (DexPaprika)
+Query liquidity pools across multiple DEXs:
+
+- **Top pools by volume** - "show me top pools on base"
+- **New pools** - "show newly created pools"
+- **Token pools** - "find pools for PEPE"
+- **Pool details** - OHLCV data, transactions, liquidity
+
+**Example queries:**
+- "show me newly created pools on base sorted by volume"
+- "get pool details for 0x..."
+- "what are the top pools on ethereum"
 
 ### 🔄 DEX Router Activity
 Monitor real-time swap activity across multiple DEXs on Base:
@@ -100,10 +126,18 @@ MCP_BASE_SERVER_CMD="node /path/to/base-mcp-server/dist/index.js start"
 MCP_DEXSCREENER_CMD="node /path/to/mcp-dexscreener/index.js"
 MCP_HONEYPOT_CMD="bash -lc 'cd /path/to/base-mcp-honeypot && node dist/server.js stdio'"
 MCP_WEBSEARCH_CMD="uvx duckduckgo-mcp-server"
+MCP_DEXPAPRIKA_CMD="npx dexpaprika-mcp"
 
 # Optional
-GEMINI_MODEL=gemini-1.5-flash-latest
-PLANNER_PROMPT_FILE=./prompts/planner.md
+GEMINI_MODEL=gemini-2.5-flash-lite
+
+# Planner mode: "agentic" (default, LLM decides) or "simple" (pattern matching)
+PLANNER_MODE=agentic
+
+# Agentic planner settings
+AGENTIC_MAX_ITERATIONS=8
+AGENTIC_MAX_TOOL_CALLS=30
+AGENTIC_TIMEOUT_SECONDS=90
 ```
 
 ### Usage
@@ -187,14 +221,61 @@ Goodbye!
 
 ## Architecture
 
-- **SimplePlanner**: Pattern-based intent matching for common queries (router activity, token lookups)
-- **Gemini AI**: Handles complex/ambiguous queries that don't match patterns
-- **MCP Servers**: 
-  - Blockscout (Base transactions)
-  - Dexscreener (token data)
-  - Honeypot (safety checks)
-  - DuckDuckGo (web search)
-- **Token Cards**: Consistent formatting with automatic Dexscreener enrichment
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        User Query                           │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    AgenticPlanner                           │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │  Gemini 2.5 Flash Lite (Native Function Calling)    │   │
+│  │  - Analyzes query                                    │   │
+│  │  - Selects tools dynamically                         │   │
+│  │  - Multi-turn reasoning (up to 8 iterations)         │   │
+│  │  - Parallel tool execution                           │   │
+│  │  - Natural language synthesis                        │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+          ┌───────────────┼───────────────┐
+          │               │               │
+          ▼               ▼               ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  Blockscout │  │ Dexscreener │  │  DexPaprika │
+│  (Base MCP) │  │    (MCP)    │  │    (MCP)    │
+├─────────────┤  ├─────────────┤  ├─────────────┤
+│ • Txns      │  │ • Search    │  │ • Pools     │
+│ • Balances  │  │ • Trending  │  │ • OHLCV     │
+│ • Contracts │  │ • Pairs     │  │ • Networks  │
+│ • Logs      │  │ • Tokens    │  │ • DEXes     │
+└─────────────┘  └─────────────┘  └─────────────┘
+          │               │               │
+          ▼               ▼               ▼
+┌─────────────┐  ┌─────────────┐
+│  Honeypot   │  │  DuckDuckGo │
+│    (MCP)    │  │    (MCP)    │
+├─────────────┤  ├─────────────┤
+│ • Safety    │  │ • Web Search│
+│ • Tax %     │  │ • News      │
+│ • Risks     │  │ • Info      │
+└─────────────┘  └─────────────┘
+```
+
+### Planner Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **agentic** (default) | LLM decides tools, parallel execution, multi-turn | Complex queries, exploration |
+| **simple** | Pattern matching, fixed handlers | Fast, predictable responses |
+
+### MCP Servers
+- **Blockscout** - Base blockchain transactions, balances, contracts
+- **Dexscreener** - Token search, trending, pairs data
+- **DexPaprika** - Pool analytics, OHLCV, liquidity data
+- **Honeypot** - Token safety checks, tax detection
+- **DuckDuckGo** - Web search for project info
 
 ## Development
 
