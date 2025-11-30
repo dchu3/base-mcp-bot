@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = Field(..., alias="GEMINI_API_KEY")
     gemini_model: str = Field(
-        default="gemini-1.5-flash-latest",
+        default="gemini-2.0-flash-lite",
         alias="GEMINI_MODEL",
     )
     planner_prompt_file: Optional[Path] = Field(
@@ -76,6 +76,20 @@ class Settings(BaseSettings):
     )
     planner_max_iterations: int = Field(
         default=2, alias="PLANNER_MAX_ITERATIONS", ge=1, le=5
+    )
+
+    # Planner mode: "simple" (pattern-based), "agentic" (LLM decides)
+    planner_mode: str = Field(default="agentic", alias="PLANNER_MODE")
+
+    # Agentic planner settings
+    agentic_max_iterations: int = Field(
+        default=8, alias="AGENTIC_MAX_ITERATIONS", ge=1, le=15
+    )
+    agentic_max_tool_calls: int = Field(
+        default=30, alias="AGENTIC_MAX_TOOL_CALLS", ge=1, le=100
+    )
+    agentic_timeout_seconds: int = Field(
+        default=90, alias="AGENTIC_TIMEOUT_SECONDS", ge=10, le=300
     )
 
 
